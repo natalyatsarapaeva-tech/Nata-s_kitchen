@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>📸 Умный загрузчик рецептов</title>
+  <style>
+    :root {
+      --cream:#fdf6ec; --warm:#f5e6d0; --brown:#5c3d2e;
+      --amber:#d4843a; --amber-light:#e8a85f; --text:#2e1f14;
+      --text-soft:#7a5c4a; --white:#fff; --shadow:rgba(92,61,46,0.15);
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'system-ui',sans-serif; background:var(--cream); color:var(--text); min-height:100vh; }
+
+    .header { background:var(--brown); padding:40px 24px 28px; }
+    .header h1 { color:var(--cream); font-size:24px; font-weight:700; }
+    .header p { color:var(--amber-light); font-size:13px; margin-top:6px; }
+
+    .body { padding:20px; max-width:600px; margin:0 auto; }
+
+    /* API KEY */
+    .api-box { background:var(--white); border-radius:16px; padding:18px; margin-bottom:20px; box-shadow:0 2px 12px var(--shadow); }
+    .api-box label { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--amber); font-weight:700; display:block; margin-bottom:8px; }
+    .api-box input { width:100%; padding:10px 14px; border-radius:10px; border:2px solid var(--warm); font-size:14px; font-family:monospace; outline:none; }
+    .api-box input:focus { border-color:var(--amber); }
+    .api-note { font-size:12px; color:var(--text-soft); margin-top:6px; }
+
+    /* DROP ZONE */
+    .drop-zone {
+      border:3px dashed var(--amber); border-radius:20px; padding:40px 20px;
+      text-align:center; cursor:pointer; transition:background .2s;
+      background:var(--white); margin-bottom:20px; position:relative;
+    }
+    .drop-zone:hover, .drop-zone.over { background:var(--warm); }
+    .drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+    .drop-icon { font-size:52px; margin-bottom:12px; }
+    .drop-text { color:var(--text-soft); font-size:15px; }
+    .drop-sub { color:var(--amber); font-size:13px; margin-top:6px; font-weight:700; }
+
+    /* PREVIEW IMAGE */
+    #img-preview { display:none; margin-bottom:20px; border-radius:16px; overflow:hidden; box-shadow:0 2px 12px var(--shadow); }
+    #img-preview img { width:100%; max-height:300px; object-fit:cover; display:block; }
+    #img-preview .img-actions { padding:12px 16px; background:var(--white); display:flex; gap:10px; }
+
+    /* BUTTONS */
+    .btn { padding:12px 20px; border-radius:12px; border:none; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; transition:transform .15s; }
+    .btn:active { transform:scale(.97); }
+    .btn-primary { background:var(--brown); color:var(--cream); width:100%; padding:16px; font-size:16px; border-radius:14px; }
+    .btn-secondary { background:var(--warm); color:var(--brown); }
+    .btn:disabled { opacity:.5; cursor:default; }
+
+    /* STATUS */
+    #status { display:none; background:var(--white); border-radius:16px; padding:20px; margin-bottom:20px; box-shadow:0 2px 12px var(--shadow); }
+    .status-step { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--warm); font-size:14px; }
+    .status-step:last-child { border-bottom:none; }
+    .step-icon { font-size:20px; width:28px; text-align:center; flex-shrink:0; }
+    .step-text { flex:1; color:var(--text-soft); }
+    .step-text.active { color:var(--text); font-weight:700; }
+    .step-text.done { color:#27ae60; }
+    .step-text.error { color:#e74c3c; }
+
+    /* RESULT EDITOR */
+    #result { display:none; margin-bottom:20px; }
+    .section { background:var(--white); border-radius:16px; padding:18px; margin-bottom:16px; box-shadow:0 2px 12px var(--shadow); }
+    .section-title { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--amber); font-weight:700; margin-bottom:14px; }
+
+    label.field { font-size:13px; color:var(--text-soft); display:block; margin-bottom:4px; margin-top:10px; }
+    input.field, textarea.field, select.field {
+      width:100%; padding:10px 12px; border-radius:10px; border:2px solid var(--warm);
+      font-size:14px; font-family:inherit; color:var(--text); outline:none; background:var(--cream);
+    }
+    input.field:focus, textarea.field:focus, select.field:focus { border-color:var(--amber); background:var(--white); }
+    textarea.field { resize:vertical; min-height:70px; }
+
+    .emoji-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+    .emoji-btn { font-size:26px; padding:6px; border-radius:8px; border:2px solid var(--warm); background:var(--white); cursor:pointer; }
+    .emoji-btn.sel { border-color:var(--amber); background:var(--warm); }
+
+    .tags-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+    .tag-btn { padding:6px 12px; border-radius:16px; font-size:12px; font-weight:700; cursor:pointer; border:2px solid var(--warm); background:transparent; color:var(--text-soft); }
+    .tag-btn.sel { background:var(--brown); color:var(--cream); border-color:var(--brown); }
+
+    .ing-list, .steps-list { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+    .ing-row { display:flex; gap:8px; align-items:center; }
+    .ing-row input { flex:1; padding:9px 11px; border-radius:9px; border:2px solid var(--warm); font-size:13px; font-family:inherit; outline:none; }
+    .ing-row input:focus { border-color:var(--amber); }
+    .step-row { display:flex; gap:8px; align-items:flex-start; }
+    .step-n { background:var(--amber); color:var(--white); width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; margin-top:9px; }
+    .step-row textarea { flex:1; padding:9px 11px; border-radius:9px; border:2px solid var(--warm); font-size:13px; font-family:inherit; resize:vertical; min-height:56px; outline:none; }
+    .step-row textarea:focus { border-color:var(--amber); }
+    .del-btn { background:none; border:none; font-size:18px; color:var(--text-soft); cursor:pointer; padding:4px; flex-shrink:0; }
+    .add-btn { width:100%; padding:10px; border-radius:10px; border:2px dashed var(--amber); background:transparent; color:var(--amber); font-size:13px; font-weight:700; cursor:pointer; margin-top:8px; }
+
+    .save-section { position:sticky; bottom:0; background:var(--cream); padding:16px 0 24px; }
+
+    /* TOAST */
+    #toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(100px); background:var(--brown); color:var(--cream); padding:14px 24px; border-radius:14px; font-size:15px; font-weight:700; transition:transform .3s; z-index:999; white-space:nowrap; }
+    #toast.show { transform:translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📸 Умный загрузчик рецептов</h1>
+  <p>GPT-4o читает фото и разбирает рецепт автоматически</p>
+</div>
+
+<div class="body">
+
+  <!-- API KEY -->
+  <div class="api-box">
+    <label>OpenAI API Key</label>
+    <input type="password" id="api-key" placeholder="sk-..." autocomplete="off"/>
+    <div class="api-note">🔒 Ключ хранится только в этой вкладке, никуда не отправляется кроме OpenAI</div>
+  </div>
+
+  <!-- DROP ZONE -->
+  <div class="drop-zone" id="drop-zone">
+    <input type="file" id="file-input" accept="image/*" onchange="onFile(this.files[0])"/>
+    <div class="drop-icon">📷</div>
+    <div class="drop-text">Нажми или перетащи фото рецепта</div>
+    <div class="drop-sub">JPG, PNG, WEBP — скрин, фото, сканирование</div>
+  </div>
+
+  <!-- IMAGE PREVIEW -->
+  <div id="img-preview">
+    <img id="preview-img" src="" alt=""/>
+    <div class="img-actions">
+      <button class="btn btn-secondary" onclick="resetAll()">🔄 Другое фото</button>
+      <button class="btn btn-primary" id="analyze-btn" onclick="analyze()" style="flex:1">✨ Разобрать рецепт</button>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div id="status">
+    <div class="status-step"><span class="step-icon">🔍</span><span class="step-text" id="s1">Читаю изображение…</span></div>
+    <div class="status-step"><span class="step-icon">🤖</span><span class="step-text" id="s2">Жду ответа GPT-4o…</span></div>
+    <div class="status-step"><span class="step-icon">📋</span><span class="step-text" id="s3">Разбираю структуру…</span></div>
+    <div class="status-step"><span class="step-icon">✅</span><span class="step-text" id="s4">Готово — проверь и сохрани</span></div>
+  </div>
+
+  <!-- RESULT EDITOR -->
+  <div id="result">
+
+    <div class="section">
+      <div class="section-title">Основное</div>
+
+      <div class="emoji-row" id="emoji-row"></div>
+
+      <label class="field">Название</label>
+      <input class="field" id="r-title" placeholder="Название блюда"/>
+
+      <label class="field">Категория</label>
+      <div class="tags-row" id="tags-row"></div>
+
+      <label class="field">Краткое описание (время, выход)</label>
+      <input class="field" id="r-meta" placeholder="~30 мин · 4 порции"/>
+
+      <label class="field">Выход / количество</label>
+      <input class="field" id="r-yield" placeholder="4 порции"/>
+
+      <label class="field">Заметка (опционально)</label>
+      <textarea class="field" id="r-note" placeholder="Совет, лайфхак…"></textarea>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Ингредиенты</div>
+      <div class="ing-list" id="ing-list"></div>
+      <button class="add-btn" onclick="addIng()">+ Добавить ингредиент</button>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Шаги приготовления</div>
+      <div class="steps-list" id="steps-list"></div>
+      <button class="add-btn" onclick="addStep()">+ Добавить шаг</button>
+    </div>
+
+    <div class="save-section">
+      <button class="btn btn-primary" id="save-btn" onclick="saveToFirebase()">🔥 Сохранить в Firebase</button>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
+import { getFirestore, collection, doc, setDoc, getDocs } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD1uWPrp12lvpyBzXCOq9IrMuTU4uOTRao",
+  authDomain: "natas-kitchen.firebaseapp.com",
+  projectId: "natas-kitchen",
+  storageBucket: "natas-kitchen.firebasestorage.app",
+  messagingSenderId: "756908196325",
+  appId: "1:756908196325:web:0ca8d4e6f853c1cb436f0c"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const EMOJIS = ['🍳','🥞','🧇','🫓','🧁','🎂','🍰','🥧','🍋','🍯','🍓','🫐','🍅','🥕','🥦','🍆','🫑','🥔','🧀','🐟','🍗','🥩','🫕','🍝','🍛','🍜','🫙','🥗','🍲','🍮','🍦','🌿','🔥','🥢','🍕'];
+const TAGS = [
+  {id:'breakfast',label:'🌅 Завтраки'},
+  {id:'soup',label:'🍲 Супы'},
+  {id:'salad',label:'🥗 Салаты'},
+  {id:'veggie',label:'🥦 Овощи'},
+  {id:'meat',label:'🥩 Мясо'},
+  {id:'chicken',label:'🍗 Курица'},
+  {id:'fish',label:'🐟 Рыба'},
+  {id:'pasta',label:'🍝 Паста'},
+  {id:'baking',label:'🧁 Выпечка'},
+  {id:'dessert',label:'🍮 Десерты'},
+  {id:'icecream',label:'🍦 Мороженое'},
+];
+
+let imageBase64 = null;
+let imageMediaType = 'image/jpeg';
+let selectedEmoji = '🍽️';
+let selectedTags = [];
+
+// ── RESTORE SAVED API KEY ──
+const savedKey = localStorage.getItem('openai_api_key');
+if (savedKey) document.getElementById('api-key').value = savedKey;
+
+document.getElementById('api-key').addEventListener('change', e => {
+  const val = e.target.value.trim();
+  if (val) localStorage.setItem('openai_api_key', val);
+});
+
+// ── INIT UI ──
+function initUI() {
+  // Emojis
+  const er = document.getElementById('emoji-row');
+  er.innerHTML = EMOJIS.map(e =>
+    `<button class="emoji-btn${e===selectedEmoji?' sel':''}" onclick="selectEmoji('${e}')" type="button">${e}</button>`
+  ).join('');
+
+  // Tags
+  const tr = document.getElementById('tags-row');
+  tr.innerHTML = TAGS.map(t =>
+    `<button class="tag-btn" data-id="${t.id}" onclick="toggleTag('${t.id}',this)" type="button">${t.label}</button>`
+  ).join('');
+}
+initUI();
+
+// ── FILE HANDLING ──
+window.onFile = function(file) {
+  if (!file) return;
+  imageMediaType = file.type || 'image/jpeg';
+  const reader = new FileReader();
+  reader.onload = e => {
+    imageBase64 = e.target.result.split(',')[1];
+    document.getElementById('preview-img').src = e.target.result;
+    document.getElementById('img-preview').style.display = 'block';
+    document.getElementById('drop-zone').style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+};
+
+// Drag & drop
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); onFile(e.dataTransfer.files[0]); });
+
+window.resetAll = function() {
+  imageBase64 = null;
+  document.getElementById('img-preview').style.display = 'none';
+  document.getElementById('drop-zone').style.display = 'block';
+  document.getElementById('status').style.display = 'none';
+  document.getElementById('result').style.display = 'none';
+  document.getElementById('file-input').value = '';
+};
+
+// ── ANALYZE ──
+window.analyze = async function() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  if (!apiKey) { toast('Введи OpenAI API key ☝️'); return; }
+  if (!imageBase64) { toast('Сначала выбери фото'); return; }
+
+  document.getElementById('analyze-btn').disabled = true;
+  document.getElementById('status').style.display = 'block';
+  document.getElementById('result').style.display = 'none';
+  setStep(1, 'active');
+
+  const prompt = `Ты помощник по кулинарии. Перед тобой фото или скриншот рецепта (может быть на любом языке).
+
+Извлеки из него все данные и верни ТОЛЬКО валидный JSON без каких-либо пояснений, markdown или backtick-ов. Структура:
+
+{
+  "title": "Название блюда на русском",
+  "emoji": "одно подходящее эмодзи",
+  "category": одна строка из списка: breakfast|soup|salad|veggie|meat|chicken|fish|pasta|baking|dessert|icecream,
+  "meta": "краткое описание — время приготовления и выход, например: ~30 мин · 4 порции",
+  "yield": "выход блюда, например: 4 порции или 12 штук",
+  "note": "важный совет или лайфхак если есть, иначе пустая строка",
+  "ingredients": [
+    {"n": "название ингредиента", "a": "количество с единицей измерения"}
+  ],
+  "steps": [
+    "шаг 1 — полное описание действия",
+    "шаг 2",
+    "..."
+  ]
+}
+
+Правила:
+- Переведи всё на русский язык
+- Ингредиенты и шаги должны быть максимально полными и точными
+- В steps каждый шаг — отдельная строка, не нумеруй их (номера добавит интерфейс)
+- Не добавляй ничего кроме JSON`;
+
+  try {
+    setStep(1, 'done'); setStep(2, 'active');
+
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:${imageMediaType};base64,${imageBase64}`, detail: 'high' } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+
+    setStep(2, 'done'); setStep(3, 'active');
+
+    const data = await res.json();
+    const raw = data.choices[0].message.content.trim();
+
+    // Strip markdown fences if present
+    const clean = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+    const recipe = JSON.parse(clean);
+
+    setStep(3, 'done'); setStep(4, 'active');
+    fillEditor(recipe);
+    setStep(4, 'done');
+
+    document.getElementById('result').style.display = 'block';
+    document.getElementById('result').scrollIntoView({behavior:'smooth'});
+
+  } catch(e) {
+    setStep(2, 'error', '❌ Ошибка: ' + e.message);
+    console.error(e);
+  }
+
+  document.getElementById('analyze-btn').disabled = false;
+};
+
+function setStep(n, state, customText) {
+  const el = document.getElementById('s'+n);
+  el.className = 'step-text ' + state;
+  if (customText) el.textContent = customText;
+}
+
+// ── FILL EDITOR ──
+function fillEditor(r) {
+  selectedEmoji = r.emoji || '🍽️';
+  selectedTags = r.category ? [r.category] : [];
+
+  // Update emoji buttons
+  document.querySelectorAll('.emoji-btn').forEach(b => b.classList.toggle('sel', b.textContent === selectedEmoji));
+
+  // Update tag buttons
+  document.querySelectorAll('.tag-btn').forEach(b => {
+    b.classList.toggle('sel', selectedTags.includes(b.dataset.id));
+  });
+
+  document.getElementById('r-title').value = r.title || '';
+  document.getElementById('r-meta').value = r.meta || '';
+  document.getElementById('r-yield').value = r.yield || '';
+  document.getElementById('r-note').value = r.note || '';
+
+  // Ingredients
+  const il = document.getElementById('ing-list');
+  il.innerHTML = '';
+  (r.ingredients || []).forEach(i => addIngRow(i.n, i.a));
+
+  // Steps
+  const sl = document.getElementById('steps-list');
+  sl.innerHTML = '';
+  (r.steps || []).forEach(s => addStepRow(s));
+}
+
+// ── INGREDIENT ROWS ──
+function addIngRow(name='', amount='') {
+  const il = document.getElementById('ing-list');
+  const row = document.createElement('div');
+  row.className = 'ing-row';
+  row.innerHTML = `<input placeholder="Ингредиент" value="${esc(name)}"/>` +
+    `<input placeholder="Кол-во" style="max-width:110px" value="${esc(amount)}"/>` +
+    `<button class="del-btn" onclick="this.parentElement.remove()" type="button">×</button>`;
+  il.appendChild(row);
+}
+window.addIng = () => addIngRow();
+
+// ── STEP ROWS ──
+function addStepRow(text='') {
+  const sl = document.getElementById('steps-list');
+  const n = sl.children.length + 1;
+  const row = document.createElement('div');
+  row.className = 'step-row';
+  row.innerHTML = `<div class="step-n">${n}</div>` +
+    `<textarea placeholder="Шаг…">${esc(text)}</textarea>` +
+    `<button class="del-btn" onclick="this.parentElement.remove();renumber()" type="button">×</button>`;
+  sl.appendChild(row);
+}
+window.addStep = () => { addStepRow(); renumber(); };
+window.renumber = () => document.querySelectorAll('.step-n').forEach((el,i) => el.textContent = i+1);
+
+// ── EMOJI / TAG ──
+window.selectEmoji = function(e) {
+  selectedEmoji = e;
+  document.querySelectorAll('.emoji-btn').forEach(b => b.classList.toggle('sel', b.textContent === e));
+};
+window.toggleTag = function(id, btn) {
+  if (selectedTags.includes(id)) { selectedTags = selectedTags.filter(t=>t!==id); btn.classList.remove('sel'); }
+  else { selectedTags.push(id); btn.classList.add('sel'); }
+};
+
+// ── SAVE TO FIREBASE ──
+window.saveToFirebase = async function() {
+  const title = document.getElementById('r-title').value.trim();
+  if (!title) { toast('Введи название рецепта'); return; }
+
+  const ingredients = [...document.querySelectorAll('.ing-row')].map(row => {
+    const ins = row.querySelectorAll('input');
+    return { n: ins[0].value.trim(), a: ins[1].value.trim() };
+  }).filter(i => i.n);
+
+  const steps = [...document.querySelectorAll('.step-row textarea')].map(t => t.value.trim()).filter(Boolean);
+
+  const id = title.toLowerCase()
+    .replace(/[её]/g,'e').replace(/[а-яa-z0-9]+/gi, m => m)
+    .replace(/[^a-z0-9а-яё]/gi,'-').replace(/-+/g,'-').replace(/^-|-$/g,'')
+    + '-' + Date.now();
+
+  const recipe = {
+    id, emoji: selectedEmoji, title,
+    meta: document.getElementById('r-meta').value.trim(),
+    yield: document.getElementById('r-yield').value.trim(),
+    note: document.getElementById('r-note').value.trim(),
+    tags: selectedTags, ingredients, steps
+  };
+
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true; btn.textContent = 'Сохраняю…';
+
+  try {
+    await setDoc(doc(db, 'recipes', id), recipe);
+    toast('✅ Рецепт сохранён в Firebase!');
+    setTimeout(() => {
+      btn.disabled = false; btn.textContent = '🔥 Сохранить в Firebase';
+      resetAll();
+      document.getElementById('r-title').value='';
+      document.getElementById('r-meta').value='';
+      document.getElementById('r-yield').value='';
+      document.getElementById('r-note').value='';
+    }, 2000);
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '🔥 Сохранить в Firebase';
+    toast('❌ Ошибка: ' + e.message);
+  }
+};
+
+// ── HELPERS ──
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+window.toast = function(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+};
+</script>
+</body>
+</html>
