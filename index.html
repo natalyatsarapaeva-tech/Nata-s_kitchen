@@ -79,6 +79,13 @@
     .ingredient-name{color:var(--text);font-weight:400;flex:1;}
     .ingredient-amount{color:var(--brown-light);font-weight:700;font-size:13px;text-align:right;}
     .ingredient-divider{padding:10px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber);font-weight:700;border-bottom:1px solid var(--warm);}
+    .multiplier-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+    .multiplier-label{font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:var(--amber);font-weight:700;margin-right:4px;}
+    .mult-btns{display:flex;gap:5px;}
+    .mult-btn{padding:5px 11px;border-radius:20px;font-size:13px;font-family:'Lato',sans-serif;font-weight:700;cursor:pointer;border:2px solid var(--warm);background:transparent;color:var(--text-soft);transition:all .15s;}
+    .mult-btn.active{background:var(--brown);color:var(--cream);border-color:var(--brown);}
+    .mult-input{padding:5px 10px;border-radius:20px;border:2px solid var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:13px;color:var(--text);outline:none;width:80px;}
+    .mult-input:focus{border-color:var(--amber);}
     .steps-list{display:flex;flex-direction:column;gap:12px;margin-bottom:40px;}
     .step-item{background:var(--white);border-radius:14px;padding:16px;box-shadow:0 2px 10px var(--shadow);display:flex;gap:12px;align-items:flex-start;}
     .step-num{background:var(--amber);color:var(--white);width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;margin-top:1px;}
@@ -192,6 +199,16 @@
   </div>
   <div class="recipe-body">
     <div id="r-note-wrap"></div>
+    <div class="multiplier-bar">
+      <span class="multiplier-label">×</span>
+      <div class="mult-btns" id="mult-btns">
+        <button class="mult-btn" onclick="setMultiplier(0.5,this)">½</button>
+        <button class="mult-btn active" id="mult-btn-1" onclick="setMultiplier(1,this)">1</button>
+        <button class="mult-btn" onclick="setMultiplier(2,this)">2</button>
+        <button class="mult-btn" onclick="setMultiplier(3,this)">3</button>
+      </div>
+      <input class="mult-input" id="mult-input" type="text" placeholder="1/3, 0.5…" oninput="onMultiplierInput(this.value)" autocomplete="off"/>
+    </div>
     <div class="section-label">Ингредиенты</div>
     <div class="ingredients-box stagger" id="r-ingredients"></div>
     <div class="section-label">Приготовление</div>
@@ -350,19 +367,110 @@ window.clearSearch = function() {
   renderCards();
 }
 
+// ── INGREDIENT MULTIPLIER ──
+let currentMultiplier = 1;
+
+function parseFractionInput(str) {
+  str = str.trim().replace(',', '.');
+  const fracMatch = str.match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/);
+  if (fracMatch) {
+    const val = parseFloat(fracMatch[1]) / parseFloat(fracMatch[2]);
+    return isNaN(val) || val <= 0 ? null : val;
+  }
+  const val = parseFloat(str);
+  return isNaN(val) || val <= 0 ? null : val;
+}
+
+function scaleAmount(amountStr, multiplier) {
+  if (!amountStr || multiplier === 1) return amountStr;
+  const s = amountStr.trim();
+
+  let numValue, suffix;
+
+  // Mixed number: "1 1/2 г"
+  const mixedM = s.match(/^(\d+)\s+(\d+)\/(\d+)(.*)/);
+  if (mixedM) {
+    numValue = parseInt(mixedM[1]) + parseInt(mixedM[2]) / parseInt(mixedM[3]);
+    suffix = mixedM[4];
+  } else {
+    // Simple fraction: "1/2 стакана"
+    const fracM = s.match(/^(\d+)\/(\d+)(.*)/);
+    if (fracM) {
+      numValue = parseInt(fracM[1]) / parseInt(fracM[2]);
+      suffix = fracM[3];
+    } else {
+      // Leading number (int or decimal): "200 г", "2.5 ч.л."
+      const numM = s.match(/^(\d+(?:[.,]\d+)?)(.*)/);
+      if (numM) {
+        numValue = parseFloat(numM[1].replace(',', '.'));
+        suffix = numM[2];
+      }
+    }
+  }
+
+  if (numValue == null) return amountStr;
+
+  const scaled = numValue * multiplier;
+  return formatScaledNumber(scaled) + suffix;
+}
+
+function formatScaledNumber(val) {
+  // Nice unicode fractions for common values
+  const niceMap = [
+    [1/8, '⅛'], [1/4, '¼'], [1/3, '⅓'], [3/8, '⅜'],
+    [1/2, '½'], [5/8, '⅝'], [2/3, '⅔'], [3/4, '¾'], [7/8, '⅞']
+  ];
+  const intPart = Math.floor(val);
+  const frac = val - intPart;
+  if (frac < 0.04) return String(intPart === 0 ? (Math.round(val * 100) / 100) : intPart);
+  for (const [f, sym] of niceMap) {
+    if (Math.abs(frac - f) < 0.05) return intPart > 0 ? intPart + ' ' + sym : sym;
+  }
+  // Round to 1 decimal otherwise
+  return String(Math.round(val * 10) / 10);
+}
+
+function renderIngredients(ingredients, multiplier) {
+  const ing = document.getElementById('r-ingredients');
+  ing.innerHTML = (ingredients||[]).map(i => {
+    if ((i.n||'').startsWith('—')) return '<div class="ingredient-divider">' + i.n.replace(/^—\s*/,'') + '</div>';
+    const amt = scaleAmount(i.a || '', multiplier);
+    return '<div class="ingredient-item"><span class="ingredient-name">' + i.n + '</span><span class="ingredient-amount">' + amt + '</span></div>';
+  }).join('');
+}
+
+window.setMultiplier = function(val, btn) {
+  currentMultiplier = val;
+  document.getElementById('mult-input').value = '';
+  document.querySelectorAll('.mult-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderIngredients(window.currentRecipe && window.currentRecipe.ingredients, currentMultiplier);
+}
+
+window.onMultiplierInput = function(raw) {
+  const val = parseFractionInput(raw);
+  document.querySelectorAll('.mult-btn').forEach(b => b.classList.remove('active'));
+  if (val !== null) {
+    currentMultiplier = val;
+    renderIngredients(window.currentRecipe && window.currentRecipe.ingredients, currentMultiplier);
+  }
+}
+
 // ── RECIPE DETAIL ──
 function openRecipe(r) {
   window.currentRecipe = r;
+  // Reset multiplier
+  currentMultiplier = 1;
+  document.getElementById('mult-input').value = '';
+  document.querySelectorAll('.mult-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mult-btn-1').classList.add('active');
+
   document.getElementById('r-emoji').textContent = r.emoji || '🍽️';
   document.getElementById('r-title').textContent = r.title;
   document.getElementById('r-yield').textContent = r.yield || '';
   document.getElementById('r-note-wrap').innerHTML = r.note ? '<div class="note-box">💡 ' + r.note + '</div>' : '';
 
-  const ing = document.getElementById('r-ingredients');
-  ing.innerHTML = (r.ingredients||[]).map(i => {
-    if ((i.n||'').startsWith('—')) return '<div class="ingredient-divider">' + i.n.replace(/^—\s*/,'') + '</div>';
-    return '<div class="ingredient-item"><span class="ingredient-name">' + i.n + '</span><span class="ingredient-amount">' + i.a + '</span></div>';
-  }).join('');
+  renderIngredients(r.ingredients, 1);
 
   const steps = document.getElementById('r-steps');
   steps.innerHTML = (r.steps||[]).map((s,i) =>
