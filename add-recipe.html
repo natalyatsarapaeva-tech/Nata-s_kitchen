@@ -212,7 +212,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD1uWPrp12lvpyBzXCOq9IrMuTU4uOTRao",
@@ -242,11 +242,11 @@ let selectedTags = [];
 let currentMode = 'photo';
 
 // ── API KEY ──
-const savedKey = localStorage.getItem('openai_api_key');
+const savedKey = localStorage.getItem('openai_key') || localStorage.getItem('openai_api_key');
 if (savedKey) document.getElementById('api-key').value = savedKey;
 document.getElementById('api-key').addEventListener('change', e => {
   const v = e.target.value.trim();
-  if (v) localStorage.setItem('openai_api_key', v);
+  if (v) { localStorage.setItem('openai_key', v); localStorage.setItem('openai_api_key', v); }
 });
 
 // ── MODE SWITCH ──
@@ -515,6 +515,14 @@ window.saveToFirebase = async function() {
   try {
     await setDoc(doc(db, 'recipes', id), recipe);
     toast('✅ Рецепт сохранён!');
+
+    // Auto-lookup nutrition for new ingredients (best-effort, no error shown to user)
+    const apiKey = document.getElementById('api-key').value.trim();
+    if (apiKey) {
+      btn.textContent = '🥗 Ищу калорийность…';
+      lookupAndSaveNutrition(ingredients, apiKey).catch(() => {});
+    }
+
     setTimeout(() => {
       btn.disabled = false; btn.textContent = '🔥 Сохранить в Firebase';
       // Reset
@@ -532,6 +540,55 @@ window.saveToFirebase = async function() {
     toast('❌ Ошибка: ' + e.message);
   }
 };
+
+// ── NUTRITION AUTO-LOOKUP ──
+function normalizeIngName(name) {
+  return name.toLowerCase().replace(/[^Ѐ-ӿa-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+const NUTRITION_GPT_PROMPT = `Ты диетолог. Для каждого ингредиента верни ТОЛЬКО валидный JSON без пояснений и markdown:
+{"название_как_в_запросе":{"kcal":число,"protein":число,"fat":число,"carbs":число,"unitG":число_или_null}}
+kcal/protein/fat/carbs — на 100г. unitG — вес одной штуки в граммах если поштучно (яйцо=60), иначе null. Одно десятичное.`;
+
+async function lookupAndSaveNutrition(ingredients, apiKey) {
+  const names = ingredients.filter(i => !(i.n||'').startsWith('—') && i.n).map(i => i.n);
+  if (!names.length) return;
+
+  // Only fetch for ingredients missing from nutrition collection
+  const missing = [];
+  for (const name of names) {
+    const key = normalizeIngName(name);
+    const snap = await getDoc(doc(db, 'nutrition', key));
+    if (!snap.exists()) missing.push(name);
+  }
+  if (!missing.length) return;
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'gpt-4o', max_tokens: 2000,
+      messages: [
+        { role: 'system', content: NUTRITION_GPT_PROMPT },
+        { role: 'user', content: 'Ингредиенты: ' + missing.join(', ') }
+      ]
+    })
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const raw = data.choices[0].message.content.trim();
+  const clean = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+  const result = JSON.parse(clean);
+
+  for (const [name, vals] of Object.entries(result)) {
+    if (!vals || vals.kcal == null) continue;
+    const key = normalizeIngName(name);
+    await setDoc(doc(db, 'nutrition', key), {
+      kcal: +vals.kcal, protein: +vals.protein, fat: +vals.fat, carbs: +vals.carbs,
+      ...(vals.unitG ? { unitG: +vals.unitG } : {})
+    });
+  }
+}
 
 // ── HELPERS ──
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }

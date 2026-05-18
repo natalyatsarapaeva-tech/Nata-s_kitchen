@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>🥗 Калорийность — Моя кухня</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital@1&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--cream:#fdf6ec;--warm:#f5e6d0;--brown:#5c3d2e;--amber:#d4843a;--amber-light:#e8a85f;--text:#2e1f14;--text-soft:#7a5c4a;--white:#fff;--shadow:rgba(92,61,46,0.15);}
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Lato',sans-serif;background:var(--cream);color:var(--text);min-height:100vh;}
+    .header{background:var(--brown);padding:44px 24px 24px;}
+    .back-btn{display:flex;align-items:center;gap:8px;color:var(--amber-light);font-size:14px;cursor:pointer;background:none;border:none;padding:0;margin-bottom:16px;font-family:'Lato',sans-serif;text-decoration:none;}
+    .page-title{font-family:'Playfair Display',serif;font-size:24px;color:var(--cream);}
+    .page-sub{font-size:13px;color:var(--amber-light);margin-top:4px;}
+    .body{padding:20px;max-width:600px;}
+    .card{background:var(--white);border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 2px 12px var(--shadow);}
+    .card-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--amber);font-weight:700;display:block;margin-bottom:8px;}
+    .key-input{width:100%;padding:10px 14px;border-radius:10px;border:2px solid var(--warm);font-size:14px;font-family:monospace;outline:none;}
+    .key-input:focus{border-color:var(--amber);}
+    .key-note{font-size:12px;color:var(--text-soft);margin-top:6px;}
+    .btn{padding:12px 20px;border-radius:12px;border:none;font-size:14px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif;transition:transform .15s;}
+    .btn:active{transform:scale(.97);}
+    .btn-primary{background:var(--brown);color:var(--cream);width:100%;padding:14px;font-size:15px;border-radius:14px;margin-top:10px;}
+    .btn-secondary{background:var(--warm);color:var(--brown);width:100%;padding:12px;border-radius:12px;margin-bottom:8px;}
+    .btn:disabled{opacity:.5;cursor:default;}
+    .stats-row{display:flex;gap:12px;margin-bottom:14px;}
+    .stat-card{flex:1;background:var(--warm);border-radius:12px;padding:12px;text-align:center;}
+    .stat-num{font-size:24px;font-weight:700;color:var(--brown);}
+    .stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-soft);margin-top:3px;}
+    .progress-bar{background:var(--warm);border-radius:8px;height:8px;margin:10px 0;overflow:hidden;}
+    .progress-fill{background:var(--amber);height:100%;width:0%;transition:width .3s;border-radius:8px;}
+    #status-msg{font-size:13px;color:var(--text-soft);padding:6px 0;min-height:18px;}
+    .ing-table{width:100%;border-collapse:collapse;}
+    .ing-table th{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber);font-weight:700;text-align:left;padding:6px 4px;border-bottom:2px solid var(--warm);}
+    .ing-table td{font-size:13px;padding:7px 4px;border-bottom:1px solid var(--warm);vertical-align:middle;}
+    .ing-table tr:last-child td{border-bottom:none;}
+    .td-name{color:var(--text);font-weight:500;max-width:130px;word-break:break-word;}
+    .td-count{color:var(--text-soft);font-size:11px;text-align:center;}
+    .td-nut{color:var(--brown);font-weight:700;text-align:right;}
+    .td-missing{color:#c0784a;font-size:11px;font-style:italic;}
+    .lookup-one-btn{padding:4px 9px;border-radius:10px;border:2px solid var(--amber);background:transparent;color:var(--amber);font-size:11px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap;}
+    .lookup-one-btn:disabled{opacity:.5;}
+    .table-title-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <a class="back-btn" href="index.html">← Моя кухня</a>
+  <div class="page-title">🥗 База калорийности</div>
+  <div class="page-sub">Питательные ценности ингредиентов</div>
+</div>
+
+<div class="body">
+  <div class="card">
+    <label class="card-label">OpenAI API Key</label>
+    <input class="key-input" type="password" id="api-key" placeholder="sk-…" autocomplete="off"/>
+    <div class="key-note">Используется только в браузере — никуда не отправляется кроме OpenAI</div>
+  </div>
+
+  <div class="card">
+    <div id="stats-row" class="stats-row" style="display:none">
+      <div class="stat-card"><div class="stat-num" id="stat-total">0</div><div class="stat-label">ингредиентов</div></div>
+      <div class="stat-card"><div class="stat-num" id="stat-found">0</div><div class="stat-label">с данными</div></div>
+      <div class="stat-card"><div class="stat-num" id="stat-missing">0</div><div class="stat-label">нет данных</div></div>
+    </div>
+    <button class="btn btn-secondary" onclick="scanAll()">🔍 Сканировать все рецепты</button>
+    <button class="btn btn-primary" id="lookup-btn" onclick="lookupAllMissing()" style="display:none">✨ Заполнить отсутствующие через GPT</button>
+    <div id="progress-wrap" style="display:none"><div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div></div>
+    <div id="status-msg"></div>
+  </div>
+
+  <div id="table-card" class="card" style="display:none">
+    <div class="table-title-row">
+      <label class="card-label" style="margin-bottom:0" id="table-title">Ингредиенты</label>
+    </div>
+    <table class="ing-table">
+      <thead><tr><th>Ингредиент</th><th style="text-align:center">×</th><th style="text-align:right">ккал</th><th style="text-align:right">Б</th><th style="text-align:right">Ж</th><th style="text-align:right">У</th><th></th></tr></thead>
+      <tbody id="ing-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
+import { getFirestore, collection, getDocs, doc, setDoc } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD1uWPrp12lvpyBzXCOq9IrMuTU4uOTRao",
+  authDomain: "natas-kitchen.firebaseapp.com",
+  projectId: "natas-kitchen",
+  storageBucket: "natas-kitchen.firebasestorage.app",
+  messagingSenderId: "756908196325",
+  appId: "1:756908196325:web:0ca8d4e6f853c1cb436f0c"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let ingredientMap = {};  // normalizedKey → { display, count }
+let nutritionData = {};  // normalizedKey → { kcal, protein, fat, carbs, unitG? }
+
+const savedKey = localStorage.getItem('openai_key');
+if (savedKey) document.getElementById('api-key').value = savedKey;
+document.getElementById('api-key').addEventListener('change', e => {
+  if (e.target.value) localStorage.setItem('openai_key', e.target.value);
+});
+
+function normalize(name) {
+  return name.toLowerCase().replace(/[^Ѐ-ӿa-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+window.scanAll = async function() {
+  setStatus('Загружаю рецепты…');
+  const [recipesSnap, nutSnap] = await Promise.all([
+    getDocs(collection(db, 'recipes')),
+    getDocs(collection(db, 'nutrition'))
+  ]);
+
+  nutritionData = {};
+  nutSnap.docs.forEach(d => { nutritionData[d.id] = d.data(); });
+
+  ingredientMap = {};
+  recipesSnap.docs.forEach(d => {
+    (d.data().ingredients || []).forEach(ing => {
+      if (!ing.n || ing.n.startsWith('—')) return;
+      const key = normalize(ing.n);
+      if (!ingredientMap[key]) ingredientMap[key] = { display: ing.n, count: 0 };
+      ingredientMap[key].count++;
+    });
+  });
+
+  const keys = Object.keys(ingredientMap);
+  const foundCount = keys.filter(k => nutritionData[k]).length;
+  const missingCount = keys.length - foundCount;
+
+  document.getElementById('stats-row').style.display = 'flex';
+  document.getElementById('stat-total').textContent = keys.length;
+  document.getElementById('stat-found').textContent = foundCount;
+  document.getElementById('stat-missing').textContent = missingCount;
+
+  if (missingCount > 0) {
+    const btn = document.getElementById('lookup-btn');
+    btn.style.display = 'block';
+    btn.textContent = `✨ Заполнить ${missingCount} отсутствующих через GPT`;
+  }
+
+  renderTable(keys);
+  setStatus(`${keys.length} уникальных ингредиентов · ${foundCount} с данными · ${missingCount} нужно добавить`);
+};
+
+function renderTable(keys) {
+  keys = [...keys].sort((a, b) => {
+    const am = !nutritionData[a], bm = !nutritionData[b];
+    if (am !== bm) return am ? -1 : 1;
+    return a.localeCompare(b, 'ru');
+  });
+  const tbody = document.getElementById('ing-tbody');
+  tbody.innerHTML = keys.map(k => {
+    const nut = nutritionData[k];
+    const info = ingredientMap[k];
+    const escapedKey = k.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    if (nut) {
+      return `<tr>
+        <td class="td-name">${info.display}</td>
+        <td class="td-count">${info.count}</td>
+        <td class="td-nut">${Math.round(nut.kcal)}</td>
+        <td class="td-nut">${nut.protein}</td>
+        <td class="td-nut">${nut.fat}</td>
+        <td class="td-nut">${nut.carbs}</td>
+        <td></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td class="td-name">${info.display}</td>
+      <td class="td-count">${info.count}</td>
+      <td colspan="4" class="td-missing">нет данных</td>
+      <td><button class="lookup-one-btn" id="btn-${k}" onclick="lookupOne('${escapedKey}')" type="button">GPT</button></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('table-card').style.display = 'block';
+}
+
+const NUTRITION_PROMPT = `Ты диетолог. Для каждого ингредиента верни ТОЛЬКО валидный JSON без пояснений и markdown:
+{"название_как_в_запросе":{"kcal":число,"protein":число,"fat":число,"carbs":число,"unitG":число_или_null}}
+kcal/protein/fat/carbs — на 100г сырого продукта. unitG — вес одной штуки в граммах если измеряется поштучно (яйцо=60, помидор=100), иначе null. Все числа с одним десятичным знаком.`;
+
+async function callGPT(names) {
+  const apiKey = document.getElementById('api-key').value.trim();
+  if (!apiKey) { setStatus('⚠️ Введи OpenAI API key'); throw new Error('no key'); }
+  localStorage.setItem('openai_key', apiKey);
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      max_tokens: 3000,
+      messages: [
+        { role: 'system', content: NUTRITION_PROMPT },
+        { role: 'user', content: 'Ингредиенты: ' + names.join(', ') }
+      ]
+    })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  const raw = data.choices[0].message.content.trim();
+  const clean = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+  return JSON.parse(clean);
+}
+
+async function saveNutritionResult(result, batch) {
+  for (const [name, vals] of Object.entries(result)) {
+    if (!vals || vals.kcal == null) continue;
+    const normName = normalize(name);
+    const key = batch.find(k => k === normName) ||
+                batch.find(k => ingredientMap[k]?.display.toLowerCase() === name.toLowerCase()) ||
+                normName;
+    const payload = {
+      kcal: +vals.kcal, protein: +vals.protein, fat: +vals.fat, carbs: +vals.carbs,
+      ...(vals.unitG ? { unitG: +vals.unitG } : {})
+    };
+    nutritionData[key] = payload;
+    await setDoc(doc(db, 'nutrition', key), payload);
+  }
+}
+
+window.lookupAllMissing = async function() {
+  const missing = Object.keys(ingredientMap).filter(k => !nutritionData[k]);
+  if (!missing.length) return;
+
+  const btn = document.getElementById('lookup-btn');
+  btn.disabled = true;
+
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressFill = document.getElementById('progress-fill');
+  progressWrap.style.display = 'block';
+
+  const BATCH = 25;
+  let processed = 0;
+
+  for (let i = 0; i < missing.length; i += BATCH) {
+    const batch = missing.slice(i, i + BATCH);
+    const displayNames = batch.map(k => ingredientMap[k].display);
+    setStatus(`GPT: ${i + 1}–${Math.min(i + BATCH, missing.length)} из ${missing.length}…`);
+    try {
+      const result = await callGPT(displayNames);
+      await saveNutritionResult(result, batch);
+      processed += batch.length;
+      progressFill.style.width = `${(processed / missing.length) * 100}%`;
+    } catch (e) {
+      if (e.message !== 'no key') setStatus('❌ ' + e.message);
+      btn.disabled = false;
+      return;
+    }
+  }
+
+  const keys = Object.keys(ingredientMap);
+  const foundCount = keys.filter(k => nutritionData[k]).length;
+  document.getElementById('stat-found').textContent = foundCount;
+  document.getElementById('stat-missing').textContent = keys.length - foundCount;
+  renderTable(keys);
+  setStatus(`✅ Готово! Данные загружены для ${processed} ингредиентов.`);
+  btn.disabled = false;
+  btn.style.display = 'none';
+};
+
+window.lookupOne = async function(key) {
+  const displayName = ingredientMap[key]?.display || key;
+  const btn = document.getElementById(`btn-${key}`);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  setStatus(`Запрашиваю «${displayName}»…`);
+  try {
+    const result = await callGPT([displayName]);
+    await saveNutritionResult(result, [key]);
+    renderTable(Object.keys(ingredientMap));
+    const found = Object.keys(ingredientMap).filter(k => nutritionData[k]).length;
+    document.getElementById('stat-found').textContent = found;
+    document.getElementById('stat-missing').textContent = Object.keys(ingredientMap).length - found;
+    setStatus(`✅ Данные для «${displayName}» сохранены.`);
+  } catch (e) {
+    if (e.message !== 'no key') setStatus('❌ ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'GPT'; }
+  }
+};
+
+function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
+</script>
+</body>
+</html>
