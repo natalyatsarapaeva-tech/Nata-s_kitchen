@@ -538,9 +538,13 @@ window.updateNutritionCalc = function() {
   }
 };
 
-const NUTRITION_GPT_PROMPT = `Ты диетолог. Для каждого ингредиента верни ТОЛЬКО валидный JSON без пояснений и markdown:
-{"название_как_в_запросе":{"kcal":число,"protein":число,"fat":число,"carbs":число,"unitG":число_или_null}}
-kcal/protein/fat/carbs — на 100г. unitG — вес одной штуки в граммах если измеряется поштучно (яйцо=60), иначе null. Одно десятичное.`;
+const NUTRITION_GPT_PROMPT = `Ты диетолог. Верни ОДИН JSON-объект (без markdown, без пояснений), где каждый ключ — название ингредиента точно как в запросе, значение — объект с полями:
+- kcal: число (ккал на 100г)
+- protein: число (г белков на 100г)
+- fat: число (г жиров на 100г)
+- carbs: число (г углеводов на 100г)
+- unitG: число или null (вес одной штуки в граммах если поштучно, иначе null)
+Одно десятичное. Данные для сырых продуктов по USDA.`;
 
 async function callNutritionGPT(names, apiKey) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -548,17 +552,16 @@ async function callNutritionGPT(names, apiKey) {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: 'gpt-4o', max_tokens: 2000,
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: NUTRITION_GPT_PROMPT },
-        { role: 'user', content: 'Ингредиенты: ' + names.join(', ') }
+        { role: 'user', content: 'Верни JSON с данными для всех этих ингредиентов: ' + names.join(', ') }
       ]
     })
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
-  const raw = data.choices[0].message.content.trim();
-  const clean = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
-  return JSON.parse(clean);
+  return JSON.parse(data.choices[0].message.content);
 }
 
 window.lookupMissingNutrition = async function() {

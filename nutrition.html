@@ -181,9 +181,13 @@ function renderTable(keys) {
   document.getElementById('table-card').style.display = 'block';
 }
 
-const NUTRITION_PROMPT = `Ты диетолог. Для каждого ингредиента верни ТОЛЬКО валидный JSON без пояснений и markdown:
-{"название_как_в_запросе":{"kcal":число,"protein":число,"fat":число,"carbs":число,"unitG":число_или_null}}
-kcal/protein/fat/carbs — на 100г сырого продукта. unitG — вес одной штуки в граммах если измеряется поштучно (яйцо=60, помидор=100), иначе null. Все числа с одним десятичным знаком.`;
+const NUTRITION_PROMPT = `Ты диетолог. Верни ОДИН JSON-объект (без markdown, без пояснений), где каждый ключ — название ингредиента точно как в запросе, значение — объект с полями:
+- kcal: число (ккал на 100г)
+- protein: число (г белков на 100г)
+- fat: число (г жиров на 100г)
+- carbs: число (г углеводов на 100г)
+- unitG: число или null (вес одной штуки в граммах если измеряется поштучно, иначе null)
+Все числа с одним десятичным знаком. Данные для сырых продуктов по USDA.`;
 
 async function callGPT(names) {
   const apiKey = document.getElementById('api-key').value.trim();
@@ -196,9 +200,10 @@ async function callGPT(names) {
     body: JSON.stringify({
       model: 'gpt-4o',
       max_tokens: 3000,
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: NUTRITION_PROMPT },
-        { role: 'user', content: 'Ингредиенты: ' + names.join(', ') }
+        { role: 'user', content: 'Верни JSON с данными для всех этих ингредиентов: ' + names.join(', ') }
       ]
     })
   });
@@ -207,9 +212,7 @@ async function callGPT(names) {
     throw new Error(err.error?.message || `HTTP ${res.status}`);
   }
   const data = await res.json();
-  const raw = data.choices[0].message.content.trim();
-  const clean = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
-  return JSON.parse(clean);
+  return JSON.parse(data.choices[0].message.content);
 }
 
 async function saveNutritionResult(result, batch) {
