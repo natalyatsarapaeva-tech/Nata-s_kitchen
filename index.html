@@ -80,7 +80,16 @@
     .ingredient-amount{color:var(--brown-light);font-weight:700;font-size:13px;text-align:right;}
     .ingredient-divider{padding:10px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber);font-weight:700;border-bottom:1px solid var(--warm);}
     /* ── NUTRITION PANEL ── */
-    .nutrition-box{background:var(--white);border-radius:14px;padding:16px;margin-bottom:24px;box-shadow:0 2px 10px var(--shadow);}
+    .nutrition-accordion{background:var(--white);border-radius:14px;margin-bottom:24px;box-shadow:0 2px 10px var(--shadow);overflow:hidden;}
+    .nutrition-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;text-align:left;gap:8px;}
+    .nutrition-toggle-left{display:flex;align-items:center;gap:10px;}
+    .nutrition-toggle-label{font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:var(--amber);font-weight:700;}
+    .nutrition-toggle-summary{font-size:13px;color:var(--text-soft);}
+    .nutrition-chevron{font-size:14px;color:var(--amber);transition:transform .25s;flex-shrink:0;}
+    .nutrition-chevron.open{transform:rotate(180deg);}
+    .nutrition-body{overflow:hidden;max-height:0;transition:max-height .3s ease;}
+    .nutrition-body.open{max-height:600px;}
+    .nutrition-inner{padding:0 18px 16px;}
     .nutrition-row{display:flex;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--warm);font-size:13px;gap:6px;}
     .nutrition-row:last-child{border-bottom:none;}
     .nutrition-ing-name{flex:1;color:var(--text);}
@@ -95,9 +104,9 @@
     .nutrition-num-input{width:72px;padding:6px 10px;border-radius:10px;border:2px solid var(--warm);background:var(--cream);font-family:'Lato',sans-serif;font-size:13px;color:var(--text);outline:none;}
     .nutrition-num-input:focus{border-color:var(--amber);}
     .nutrition-result{font-weight:700;color:var(--brown);font-size:13px;min-width:100px;text-align:right;}
-    .nutrition-section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
-    .nutrition-lookup-btn{padding:5px 12px;border-radius:20px;border:2px solid var(--amber);background:transparent;color:var(--amber);font-size:12px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif;}
+    .nutrition-lookup-btn{padding:5px 12px;border-radius:20px;border:2px solid var(--amber);background:transparent;color:var(--amber);font-size:12px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif;flex-shrink:0;}
     .nutrition-lookup-btn:disabled{opacity:.5;}
+    .nutrition-section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
     .multiplier-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
     .multiplier-label{font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:var(--amber);font-weight:700;margin-right:4px;}
     .mult-btns{display:flex;gap:5px;}
@@ -443,7 +452,7 @@ async function loadNutritionForRecipe(ingredients) {
 
 async function showNutritionPanel(ingredients) {
   const wrap = document.getElementById('r-nutrition-wrap');
-  wrap.innerHTML = '<div class="nutrition-section-header"><div class="section-label" style="margin-bottom:0">Калорийность</div><span style="font-size:12px;color:var(--text-soft)">загрузка…</span></div>';
+  wrap.innerHTML = `<div class="nutrition-accordion"><button class="nutrition-toggle" type="button" disabled style="opacity:.6"><div class="nutrition-toggle-left"><span class="nutrition-toggle-label">Калорийность</span><span class="nutrition-toggle-summary">загрузка…</span></div><span class="nutrition-chevron">▼</span></button></div>`;
 
   await loadNutritionForRecipe(ingredients);
 
@@ -504,17 +513,35 @@ async function showNutritionPanel(ingredients) {
   const lookupBtn = hasMissing
     ? `<button class="nutrition-lookup-btn" id="nutrition-lookup-btn" onclick="lookupMissingNutrition()">✨ Узнать</button>` : '';
 
+  const summary = hasData ? `${fmt(totalKcal)} ккал · Б${fmt(totalP)} Ж${fmt(totalF)} У${fmt(totalC)}г` : 'нет данных';
+
   wrap.innerHTML = `
-    <div class="nutrition-section-header">
-      <div class="section-label" style="margin-bottom:0">Калорийность</div>
-      ${lookupBtn}
-    </div>
-    <div class="nutrition-box">
-      ${rowsHTML}
-      ${totalHTML}
-      ${calcHTML}
+    <div class="nutrition-accordion">
+      <button class="nutrition-toggle" onclick="toggleNutrition()" type="button" id="nutrition-toggle">
+        <div class="nutrition-toggle-left">
+          <span class="nutrition-toggle-label">Калорийность</span>
+          <span class="nutrition-toggle-summary" id="nutrition-summary">${summary}</span>
+        </div>
+        <span class="nutrition-chevron" id="nutrition-chevron">▼</span>
+      </button>
+      <div class="nutrition-body" id="nutrition-body">
+        <div class="nutrition-inner">
+          ${lookupBtn ? `<div style="margin-bottom:10px">${lookupBtn}</div>` : ''}
+          ${rowsHTML}
+          ${totalHTML}
+          ${calcHTML}
+        </div>
+      </div>
     </div>`;
 }
+
+window.toggleNutrition = function() {
+  const body = document.getElementById('nutrition-body');
+  const chevron = document.getElementById('nutrition-chevron');
+  if (!body) return;
+  body.classList.toggle('open');
+  chevron.classList.toggle('open');
+};
 
 window.updateNutritionCalc = function() {
   const weight = parseFloat(document.getElementById('n-weight')?.value) || 0;
