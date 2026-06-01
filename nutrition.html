@@ -66,6 +66,7 @@
       <div class="stat-card"><div class="stat-num" id="stat-missing">0</div><div class="stat-label">нет данных</div></div>
     </div>
     <button class="btn btn-secondary" onclick="scanAll()">🔍 Сканировать все рецепты</button>
+    <button class="btn btn-secondary" id="fix-unitg-btn" onclick="fixMissingUnitG()" style="display:none">🔄 Обновить unitG (штучные ингредиенты)</button>
     <button class="btn btn-primary" id="lookup-btn" onclick="lookupAllMissing()" style="display:none">✨ Заполнить отсутствующие через GPT</button>
     <div id="progress-wrap" style="display:none"><div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div></div>
     <div id="status-msg"></div>
@@ -145,6 +146,13 @@ window.scanAll = async function() {
     btn.textContent = `✨ Заполнить ${missingCount} отсутствующих через GPT`;
   }
 
+  const noUnitGCount = keys.filter(k => nutritionData[k] && !nutritionData[k].unitG).length;
+  if (noUnitGCount > 0) {
+    const fixBtn = document.getElementById('fix-unitg-btn');
+    fixBtn.style.display = 'block';
+    fixBtn.textContent = `🔄 Обновить unitG для ${noUnitGCount} ингредиентов`;
+  }
+
   renderTable(keys);
   setStatus(`${keys.length} уникальных ингредиентов · ${foundCount} с данными · ${missingCount} нужно добавить`);
 };
@@ -181,13 +189,13 @@ function renderTable(keys) {
   document.getElementById('table-card').style.display = 'block';
 }
 
-const NUTRITION_PROMPT = `Ты диетолог. Верни ОДИН JSON-объект (без markdown, без пояснений), где каждый ключ — название ингредиента точно как в запросе, значение — объект с полями:
+const NUTRITION_PROMPT = `Ты диетолог. Верни ОДИН JSON-объект (без markdown, без пояснений), где каждый ключ — название ингредиента точно как в запросе, значение — объект:
 - kcal: число (ккал на 100г)
 - protein: число (г белков на 100г)
 - fat: число (г жиров на 100г)
 - carbs: число (г углеводов на 100г)
-- unitG: число или null (вес одной штуки в граммах если измеряется поштучно, иначе null)
-Все числа с одним десятичным знаком. Данные для сырых продуктов по USDA.`;
+- unitG: вес ОДНОГО среднего экземпляра в граммах — ОБЯЗАТЕЛЬНО для любого ингредиента который считают штуками: овощи, фрукты, яйца, грибы и т.п. Примеры: яйцо=60, картофель=150, морковь=80, лук=100, свёкла=200, болгарский перец=150, помидор=100, огурец=100, кабачок=250, яблоко=150. Для сыпучих и жидких — null.
+Одно десятичное. Данные для сырых продуктов по USDA.`;
 
 async function callGPT(names) {
   const apiKey = document.getElementById('api-key').value.trim();
@@ -288,6 +296,46 @@ window.lookupOne = async function(key) {
     if (e.message !== 'no key') setStatus('❌ ' + e.message);
     if (btn) { btn.disabled = false; btn.textContent = 'GPT'; }
   }
+};
+
+window.fixMissingUnitG = async function() {
+  const noUnitG = Object.keys(ingredientMap).filter(k => nutritionData[k] && !nutritionData[k].unitG);
+  if (!noUnitG.length) { setStatus('✅ У всех ингредиентов уже есть unitG.'); return; }
+
+  const btn = document.getElementById('fix-unitg-btn');
+  btn.disabled = true;
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressFill = document.getElementById('progress-fill');
+  progressWrap.style.display = 'block'; progressFill.style.width = '0%';
+
+  const BATCH = 25;
+  let processed = 0;
+  for (let i = 0; i < noUnitG.length; i += BATCH) {
+    const batch = noUnitG.slice(i, i + BATCH);
+    const displayNames = batch.map(k => ingredientMap[k].display);
+    setStatus(`Обновляю unitG: ${i + 1}–${Math.min(i + BATCH, noUnitG.length)} из ${noUnitG.length}…`);
+    try {
+      const result = await callGPT(displayNames);
+      for (const [name, vals] of Object.entries(result)) {
+        if (!vals || vals.unitG == null) continue;
+        const normName = normalize(name);
+        const key = batch.find(k => k === normName) ||
+                    batch.find(k => ingredientMap[k]?.display.toLowerCase() === name.toLowerCase()) ||
+                    normName;
+        if (!nutritionData[key]) continue;
+        nutritionData[key] = { ...nutritionData[key], unitG: +vals.unitG };
+        await setDoc(doc(db, 'nutrition', key), nutritionData[key]);
+      }
+      processed += batch.length;
+      progressFill.style.width = `${(processed / noUnitG.length) * 100}%`;
+    } catch (e) {
+      if (e.message !== 'no key') setStatus('❌ ' + e.message);
+      btn.disabled = false; return;
+    }
+  }
+  renderTable(Object.keys(ingredientMap));
+  setStatus(`✅ unitG обновлён для ${processed} ингредиентов.`);
+  btn.disabled = false;
 };
 
 function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
