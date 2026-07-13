@@ -1,0 +1,33 @@
+// Firestore security rules — ВАЖНО: сейчас база, скорее всего, открыта на
+// чтение и запись всем ("test mode"). Это значит, что любой человек, открывший
+// исходный код страницы, может удалить или изменить все рецепты.
+//
+// Минимальный безопасный вариант до внедрения аутентификации:
+// публичное чтение, запись только для владельца (после включения
+// Firebase Authentication → Google Sign-In и подстановки своего UID).
+//
+// Деплой: firebase deploy --only firestore:rules
+// или вставить в Firebase Console → Firestore Database → Rules.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // TODO: заменить на реальный UID владельца после включения Firebase Auth,
+    // либо на `request.auth != null` для любого вошедшего пользователя.
+    function isOwner() {
+      return request.auth != null && request.auth.uid == 'REPLACE_WITH_OWNER_UID';
+    }
+
+    match /recipes/{recipeId} {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+
+    match /nutrition/{ingredientId} {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+  }
+}
