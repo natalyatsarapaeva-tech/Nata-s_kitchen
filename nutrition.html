@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🥗 Калорийность — Моя кухня</title>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital@1&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
   <style>
@@ -84,32 +84,18 @@
 </div>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
-import { getFirestore, collection, getDocs, doc, setDoc } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyD1uWPrp12lvpyBzXCOq9IrMuTU4uOTRao",
-  authDomain: "natas-kitchen.firebaseapp.com",
-  projectId: "natas-kitchen",
-  storageBucket: "natas-kitchen.firebasestorage.app",
-  messagingSenderId: "756908196325",
-  appId: "1:756908196325:web:0ca8d4e6f853c1cb436f0c"
-};
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+import { db, collection, getDocs, doc, setDoc } from './js/firebase.js';
+import { escHtml, normalizeIngName as normalize, getOpenAIKey, setOpenAIKey } from './js/utils.js';
+import { callNutritionGPT as callGPTShared, nutritionPayload, expandIngredients } from './js/nutrition.js';
 
 let ingredientMap = {};  // normalizedKey → { display, count }
 let nutritionData = {};  // normalizedKey → { kcal, protein, fat, carbs, unitG? }
 
-const savedKey = localStorage.getItem('openai_key');
+const savedKey = getOpenAIKey();
 if (savedKey) document.getElementById('api-key').value = savedKey;
 document.getElementById('api-key').addEventListener('change', e => {
-  if (e.target.value) localStorage.setItem('openai_key', e.target.value);
+  setOpenAIKey(e.target.value);
 });
-
-function normalize(name) {
-  return name.toLowerCase().replace(/[^Ѐ-ӿa-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-}
 
 window.scanAll = async function() {
   setStatus('Загружаю рецепты…');
@@ -123,9 +109,10 @@ window.scanAll = async function() {
 
   ingredientMap = {};
   recipesSnap.docs.forEach(d => {
-    (d.data().ingredients || []).forEach(ing => {
-      if (!ing.n || ing.n.startsWith('—')) return;
+    expandIngredients(d.data().ingredients).forEach(ing => {
+      if (!ing.n) return;
       const key = normalize(ing.n);
+      if (!key) return;
       if (!ingredientMap[key]) ingredientMap[key] = { display: ing.n, count: 0 };
       ingredientMap[key].count++;
     });
@@ -167,10 +154,10 @@ function renderTable(keys) {
   tbody.innerHTML = keys.map(k => {
     const nut = nutritionData[k];
     const info = ingredientMap[k];
-    const escapedKey = k.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedKey = escHtml(k.replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
     if (nut) {
       return `<tr>
-        <td class="td-name">${info.display}</td>
+        <td class="td-name">${escHtml(info.display)}</td>
         <td class="td-count">${info.count}</td>
         <td class="td-nut">${Math.round(nut.kcal)}</td>
         <td class="td-nut">${nut.protein}</td>
@@ -180,60 +167,30 @@ function renderTable(keys) {
       </tr>`;
     }
     return `<tr>
-      <td class="td-name">${info.display}</td>
+      <td class="td-name">${escHtml(info.display)}</td>
       <td class="td-count">${info.count}</td>
       <td colspan="4" class="td-missing">нет данных</td>
-      <td><button class="lookup-one-btn" id="btn-${k}" onclick="lookupOne('${escapedKey}')" type="button">GPT</button></td>
+      <td><button class="lookup-one-btn" id="btn-${escHtml(k)}" onclick="lookupOne('${escapedKey}')" type="button">GPT</button></td>
     </tr>`;
   }).join('');
   document.getElementById('table-card').style.display = 'block';
 }
 
-const NUTRITION_PROMPT = `Ты диетолог. Верни ОДИН JSON-объект (без markdown, без пояснений), где каждый ключ — название ингредиента точно как в запросе, значение — объект:
-- kcal: число (ккал на 100г)
-- protein: число (г белков на 100г)
-- fat: число (г жиров на 100г)
-- carbs: число (г углеводов на 100г)
-- unitG: вес ОДНОГО среднего экземпляра в граммах — ОБЯЗАТЕЛЬНО для любого ингредиента который считают штуками: овощи, фрукты, яйца, грибы и т.п. Примеры: яйцо=60, картофель=150, морковь=80, лук=100, свёкла=200, болгарский перец=150, помидор=100, огурец=100, кабачок=250, яблоко=150. Для сыпучих и жидких — null.
-Одно десятичное. Данные для сырых продуктов по USDA.`;
-
 async function callGPT(names) {
   const apiKey = document.getElementById('api-key').value.trim();
   if (!apiKey) { setStatus('⚠️ Введи OpenAI API key'); throw new Error('no key'); }
-  localStorage.setItem('openai_key', apiKey);
-
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      max_tokens: 3000,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: NUTRITION_PROMPT },
-        { role: 'user', content: 'Верни JSON с данными для всех этих ингредиентов: ' + names.join(', ') }
-      ]
-    })
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  return JSON.parse(data.choices[0].message.content);
+  setOpenAIKey(apiKey);
+  return callGPTShared(names, apiKey);
 }
 
 async function saveNutritionResult(result, batch) {
   for (const [name, vals] of Object.entries(result)) {
-    if (!vals || vals.kcal == null) continue;
+    const payload = nutritionPayload(vals);
+    if (!payload) continue;
     const normName = normalize(name);
     const key = batch.find(k => k === normName) ||
                 batch.find(k => ingredientMap[k]?.display.toLowerCase() === name.toLowerCase()) ||
                 normName;
-    const payload = {
-      kcal: +vals.kcal, protein: +vals.protein, fat: +vals.fat, carbs: +vals.carbs,
-      ...(vals.unitG ? { unitG: +vals.unitG } : {})
-    };
     nutritionData[key] = payload;
     await setDoc(doc(db, 'nutrition', key), payload);
   }

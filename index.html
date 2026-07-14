@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Мои рецепты">
@@ -88,7 +88,7 @@
     .nutrition-chevron{font-size:14px;color:var(--amber);transition:transform .25s;flex-shrink:0;}
     .nutrition-chevron.open{transform:rotate(180deg);}
     .nutrition-body{overflow:hidden;max-height:0;transition:max-height .3s ease;}
-    .nutrition-body.open{max-height:600px;}
+    .nutrition-body.open{max-height:3000px;}
     .nutrition-inner{padding:0 18px 16px;}
     .nutrition-row{display:flex;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--warm);font-size:13px;gap:6px;}
     .nutrition-row:last-child{border-bottom:none;}
@@ -207,6 +207,7 @@
   </div>
   <div class="cards-grid stagger" id="cards-grid"></div>
   <div class="fab-group">
+    <a class="fab-camera" href="nutrition.html" title="База калорийности" style="background:var(--brown-light)">🥗</a>
     <a class="fab-camera" href="add-recipe.html" title="Добавить рецепт по фото">📸</a>
     <button class="fab" onclick="openEditor(null)" title="Добавить рецепт вручную">+</button>
   </div>
@@ -284,19 +285,10 @@
 </div>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
-import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyD1uWPrp12lvpyBzXCOq9IrMuTU4uOTRao",
-  authDomain: "natas-kitchen.firebaseapp.com",
-  projectId: "natas-kitchen",
-  storageBucket: "natas-kitchen.firebasestorage.app",
-  messagingSenderId: "756908196325",
-  appId: "1:756908196325:web:0ca8d4e6f853c1cb436f0c"
-};
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.js';
+import { EMOJIS, TAGS } from './js/constants.js';
+import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, getOpenAIKey, setOpenAIKey } from './js/utils.js';
+import { amountToGrams, DEFAULT_UNIT_G, callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
 
 // ── STATE ──
 let allRecipes = [];
@@ -307,32 +299,17 @@ let editingId = null;
 let selectedEmoji = '🍽️';
 let selectedTags = [];
 
-const EMOJIS = ['🍳','🥞','🧇','🫓','🧁','🎂','🍰','🥧','🍋','🍯','🍓','🫐','🍅','🥕','🥦','🍆','🫑','🥔','🧀','🐟','🍗','🥩','🫕','🍝','🍛','🍜','🫙','🥗','🍲','🍮','🍦','🫧','🌿','🔥','🥢'];
-const TAGS = [
-  {id:'breakfast',label:'🌅 Завтраки'},
-  {id:'soup',label:'🍲 Супы'},
-  {id:'salad',label:'🥗 Салаты'},
-  {id:'veggie',label:'🥦 Овощи'},
-  {id:'meat',label:'🥩 Мясо'},
-  {id:'chicken',label:'🍗 Курица'},
-  {id:'fish',label:'🐟 Рыба'},
-  {id:'pasta',label:'🍝 Паста'},
-  {id:'baking',label:'🧁 Выпечка'},
-  {id:'dessert',label:'🍮 Десерты'},
-  {id:'icecream',label:'🍦 Мороженое'},
-];
-
 // ── LOAD ──
 async function loadRecipes() {
   const snap = await getDocs(collection(db, 'recipes'));
   allRecipes = snap.docs.map(d => ({id: d.id, ...d.data()}));
-  allRecipes.sort((a,b) => a.title.localeCompare(b.title, 'ru'));
+  allRecipes.sort((a,b) => (a.title||'').localeCompare(b.title||'', 'ru'));
   document.getElementById('loading').style.display = 'none';
   document.getElementById('home').style.display = 'flex';
   renderCards();
 }
 loadRecipes().catch(e => {
-  document.getElementById('loading').innerHTML = '<div style="color:#e8a85f;font-size:18px;padding:20px;text-align:center;">Ошибка загрузки 😢<br><small>' + e.message + '</small></div>';
+  document.getElementById('loading').innerHTML = '<div style="color:#e8a85f;font-size:18px;padding:20px;text-align:center;">Ошибка загрузки 😢<br><small>' + escHtml(e.message) + '</small></div>';
 });
 
 // ── RENDER CARDS ──
@@ -361,9 +338,9 @@ window.renderCards = function() {
   list.forEach(r => {
     const btn = document.createElement('button');
     btn.className = 'recipe-card';
-    btn.innerHTML = '<span class="card-emoji">' + (r.emoji||'🍽️') + '</span>' +
-      '<div class="card-info"><div class="card-name">' + r.title + '</div>' +
-      '<div class="card-meta">' + (r.meta||'') + '</div></div>' +
+    btn.innerHTML = '<span class="card-emoji">' + escHtml(r.emoji||'🍽️') + '</span>' +
+      '<div class="card-info"><div class="card-name">' + escHtml(r.title) + '</div>' +
+      '<div class="card-meta">' + escHtml(r.meta||'') + '</div></div>' +
       '<span class="card-arrow">›</span>';
     btn.onclick = () => openRecipe(r);
     grid.appendChild(btn);
@@ -399,114 +376,33 @@ window.clearSearch = function() {
 // ── NUTRITION ──
 let recipeNutritionCache = {}; // normalizedKey → data|null (null = confirmed missing)
 let recipeTotals = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
-
-function normalizeIngName(name) {
-  return name.toLowerCase().replace(/[^Ѐ-ӿa-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-const UNIT_TO_G = {
-  'г':1,'гр':1,'г.':1,'g':1,
-  'кг':1000,'кг.':1000,'kg':1000,
-  'мл':1,'мл.':1,'ml':1,
-  'л':1000,'l':1000,
-  'стакан':200,'стакана':200,'стаканов':200,
-  'ч.л':5,'ч.л.':5,
-  'ст.л':15,'ст.л.':15,
-  'щепотка':1,'щепотки':1,'щепоток':1,
-  // штучные кулинарные единицы
-  'кочан':1200,'кочана':1200,'кочанов':1200,
-  'банка':400,'банки':400,'банок':400,
-  'зубчик':5,'зубчика':5,'зубчиков':5,
-  'веточка':5,'веточки':5,'веточек':5,'веточку':5,
-  'пучок':40,'пучка':40,'пучков':40,
-  'горсть':30,'горсти':30,'горстей':30,
-  'стебель':20,'стебля':20,'стеблей':20,
-  'ломтик':20,'ломтика':20,'ломтиков':20,
-};
-
-// Дефолтный вес одного экземпляра (г) для частых штучных ингредиентов
-const DEFAULT_UNIT_G = {
-  'яйцо':60,'яйца':60,'яиц':60,'яйцо куриное':60,'яйца куриные':60,
-  'картофель':150,'картошка':150,
-  'морковь':80,'морковка':80,
-  'лук':100,'лук репчатый':100,'луковица':100,
-  'свёкла':200,'свекла':200,
-  'помидор':100,'томат':100,'помидоры':100,'томаты':100,
-  'огурец':100,'огурцы':100,
-  'болгарский перец':150,'перец болгарский':150,
-  'кабачок':250,'кабачки':250,
-  'баклажан':250,'баклажаны':250,
-  'яблоко':150,'яблоки':150,
-  'банан':120,'бананы':120,
-  'апельсин':150,'апельсины':150,
-  'лимон':80,'лимоны':80,
-  'шампиньон':30,'шампиньоны':30,'гриб':30,'грибы':30,
-  'чеснок':30, // головка; зубчик — через UNIT_TO_G
-};
-
-// Размерные множители к unitG
-const SIZE_MULT = {
-  'крупный':1.4,'крупная':1.4,'крупное':1.4,'крупных':1.4,
-  'большой':1.4,'большая':1.4,'большое':1.4,'больших':1.4,
-  'средний':1.0,'средняя':1.0,'среднее':1.0,'средних':1.0,
-  'небольшой':0.75,'небольшая':0.75,'небольших':0.75,'небольшое':0.75,
-  'маленький':0.6,'маленькая':0.6,'маленьких':0.6,'маленькое':0.6,
-  'мелкий':0.6,'мелкая':0.6,'мелкое':0.6,'мелких':0.6,
-};
-
-function amountToGrams(amountStr, unitG) {
-  if (!amountStr) return null;
-  const s = amountStr.trim().toLowerCase();
-  let num = null, unit = '';
-
-  const mixedM = s.match(/^(\d+)\s+(\d+)\/(\d+)(.*)/);
-  if (mixedM) { num = parseInt(mixedM[1]) + parseInt(mixedM[2]) / parseInt(mixedM[3]); unit = mixedM[4].trim(); }
-  else {
-    const fracM = s.match(/^(\d+)\/(\d+)(.*)/);
-    if (fracM) { num = parseInt(fracM[1]) / parseInt(fracM[2]); unit = fracM[3].trim(); }
-    else {
-      const numM = s.match(/^(\d+(?:[.,]\d+)?)(.*)/);
-      if (numM) { num = parseFloat(numM[1].replace(',', '.')); unit = numM[2].trim(); }
-    }
-  }
-  if (num === null) return null;
-  unit = unit.replace(/\.$/, '').trim();
-
-  if (UNIT_TO_G[unit] != null) return num * UNIT_TO_G[unit];
-
-  if (!unit || unit === 'шт' || unit === 'штук' || unit === 'штуки' || unit === 'штука') {
-    return unitG ? num * unitG : (!unit ? num : null);
-  }
-
-  if (SIZE_MULT[unit] != null) return unitG ? num * unitG * SIZE_MULT[unit] : null;
-
-  return null;
-}
+let nutritionRenderToken = 0; // защита от гонки при быстрой смене рецептов
 
 async function loadNutritionForRecipe(ingredients) {
-  const keys = (ingredients || [])
-    .filter(i => !(i.n || '').startsWith('—') && i.n)
+  const keys = expandIngredients(ingredients)
+    .filter(i => i.n)
     .map(i => normalizeIngName(i.n));
-  const unique = [...new Set(keys)].filter(k => !(k in recipeNutritionCache));
+  const unique = [...new Set(keys)].filter(k => k && !(k in recipeNutritionCache));
   if (!unique.length) return;
   await Promise.all(unique.map(async k => {
-    const snap = await getDoc(doc(db, 'nutrition', k));
-    recipeNutritionCache[k] = snap.exists() ? snap.data() : null;
+    recipeNutritionCache[k] = await getNutritionDoc(k);
   }));
 }
 
 async function showNutritionPanel(ingredients) {
+  const token = ++nutritionRenderToken;
   const wrap = document.getElementById('r-nutrition-wrap');
   wrap.innerHTML = `<div class="nutrition-accordion"><button class="nutrition-toggle" type="button" disabled style="opacity:.6"><div class="nutrition-toggle-left"><span class="nutrition-toggle-label">Калорийность</span><span class="nutrition-toggle-summary">загрузка…</span></div><span class="nutrition-chevron">▼</span></button></div>`;
 
   await loadNutritionForRecipe(ingredients);
+  if (token !== nutritionRenderToken) return; // рецепт уже сменился
 
   const rows = [];
   let totalKcal = 0, totalP = 0, totalF = 0, totalC = 0;
   let hasData = false, hasMissing = false;
 
-  (ingredients || []).forEach(i => {
-    if ((i.n || '').startsWith('—') || !i.n) return;
+  expandIngredients(ingredients).forEach(i => {
+    if (!i.n) return;
     const key = normalizeIngName(i.n);
     const nut = recipeNutritionCache[key];
     if (!nut) { hasMissing = true; rows.push({ name: i.n, amount: i.a, unknown: true }); return; }
@@ -530,11 +426,11 @@ async function showNutritionPanel(ingredients) {
 
   const fmt = n => n != null ? Math.round(n) : '—';
   const rowsHTML = rows.map(r => {
-    if (r.unknown) return `<div class="nutrition-row"><span class="nutrition-ing-name">${r.name}</span><span class="nutrition-unknown">${r.amount || ''} · нет данных</span></div>`;
+    if (r.unknown) return `<div class="nutrition-row"><span class="nutrition-ing-name">${escHtml(r.name)}</span><span class="nutrition-unknown">${escHtml(r.amount || '')} · нет данных</span></div>`;
     const wLabel = r.grams != null ? `${Math.round(r.grams)}г` : (r.amount || '');
     return `<div class="nutrition-row">
-      <span class="nutrition-ing-name">${r.name}</span>
-      <span class="nutrition-ing-weight">${wLabel}</span>
+      <span class="nutrition-ing-name">${escHtml(r.name)}</span>
+      <span class="nutrition-ing-weight">${escHtml(wLabel)}</span>
       <span class="nutrition-kcal">${r.kcal != null ? Math.round(r.kcal) + ' ккал' : '—'}</span>
     </div>`;
   }).join('');
@@ -611,45 +507,18 @@ window.updateNutritionCalc = function() {
   }
 };
 
-const NUTRITION_GPT_PROMPT = `Ты диетолог. Верни ОДИН JSON-объект (без markdown, без пояснений), где каждый ключ — название ингредиента точно как в запросе, значение — объект:
-- kcal: число (ккал на 100г)
-- protein: число (г белков на 100г)
-- fat: число (г жиров на 100г)
-- carbs: число (г углеводов на 100г)
-- unitG: вес ОДНОГО среднего экземпляра в граммах — ОБЯЗАТЕЛЬНО для любого ингредиента который считают штуками или экземплярами: овощи, фрукты, яйца, грибы, и т.п. Примеры: яйцо=60, картофель=150, морковь=80, лук=100, свёкла=200, болгарский перец=150, помидор=100, огурец=100, кабачок=250, яблоко=150. Для сыпучих и жидких (мука, сахар, масло, молоко) — null.
-Одно десятичное. Данные для сырых продуктов по USDA.`;
-
-async function callNutritionGPT(names, apiKey) {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'gpt-4o', max_tokens: 2000,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: NUTRITION_GPT_PROMPT },
-        { role: 'user', content: 'Верни JSON с данными для всех этих ингредиентов: ' + names.join(', ') }
-      ]
-    })
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  return JSON.parse(data.choices[0].message.content);
-}
-
 window.lookupMissingNutrition = async function() {
-  let apiKey = localStorage.getItem('openai_key');
+  let apiKey = getOpenAIKey();
   if (!apiKey) {
     apiKey = prompt('OpenAI API Key (сохранится в браузере):');
     if (!apiKey) return;
-    localStorage.setItem('openai_key', apiKey);
+    setOpenAIKey(apiKey);
   }
   const recipe = window.currentRecipe;
   if (!recipe) return;
 
-  const missing = (recipe.ingredients || [])
-    .filter(i => !(i.n||'').startsWith('—') && i.n)
-    .filter(i => !recipeNutritionCache[normalizeIngName(i.n)])
+  const missing = expandIngredients(recipe.ingredients)
+    .filter(i => i.n && !recipeNutritionCache[normalizeIngName(i.n)])
     .map(i => i.n);
 
   if (!missing.length) return;
@@ -659,14 +528,11 @@ window.lookupMissingNutrition = async function() {
   try {
     const result = await callNutritionGPT(missing, apiKey);
     for (const [name, vals] of Object.entries(result)) {
-      if (!vals || vals.kcal == null) continue;
+      const payload = nutritionPayload(vals);
+      if (!payload) continue;
       const key = normalizeIngName(name);
-      const payload = {
-        kcal: +vals.kcal, protein: +vals.protein, fat: +vals.fat, carbs: +vals.carbs,
-        ...(vals.unitG ? { unitG: +vals.unitG } : {})
-      };
       recipeNutritionCache[key] = payload;
-      await setDoc(doc(db, 'nutrition', key), payload);
+      await saveNutritionDoc(key, payload);
     }
     showNutritionPanel(recipe.ingredients);
   } catch (e) {
@@ -678,72 +544,12 @@ window.lookupMissingNutrition = async function() {
 // ── INGREDIENT MULTIPLIER ──
 let currentMultiplier = 1;
 
-function parseFractionInput(str) {
-  str = str.trim().replace(',', '.');
-  const fracMatch = str.match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/);
-  if (fracMatch) {
-    const val = parseFloat(fracMatch[1]) / parseFloat(fracMatch[2]);
-    return isNaN(val) || val <= 0 ? null : val;
-  }
-  const val = parseFloat(str);
-  return isNaN(val) || val <= 0 ? null : val;
-}
-
-function scaleAmount(amountStr, multiplier) {
-  if (!amountStr || multiplier === 1) return amountStr;
-  const s = amountStr.trim();
-
-  let numValue, suffix;
-
-  // Mixed number: "1 1/2 г"
-  const mixedM = s.match(/^(\d+)\s+(\d+)\/(\d+)(.*)/);
-  if (mixedM) {
-    numValue = parseInt(mixedM[1]) + parseInt(mixedM[2]) / parseInt(mixedM[3]);
-    suffix = mixedM[4];
-  } else {
-    // Simple fraction: "1/2 стакана"
-    const fracM = s.match(/^(\d+)\/(\d+)(.*)/);
-    if (fracM) {
-      numValue = parseInt(fracM[1]) / parseInt(fracM[2]);
-      suffix = fracM[3];
-    } else {
-      // Leading number (int or decimal): "200 г", "2.5 ч.л."
-      const numM = s.match(/^(\d+(?:[.,]\d+)?)(.*)/);
-      if (numM) {
-        numValue = parseFloat(numM[1].replace(',', '.'));
-        suffix = numM[2];
-      }
-    }
-  }
-
-  if (numValue == null) return amountStr;
-
-  const scaled = numValue * multiplier;
-  return formatScaledNumber(scaled) + suffix;
-}
-
-function formatScaledNumber(val) {
-  // Nice unicode fractions for common values
-  const niceMap = [
-    [1/8, '⅛'], [1/4, '¼'], [1/3, '⅓'], [3/8, '⅜'],
-    [1/2, '½'], [5/8, '⅝'], [2/3, '⅔'], [3/4, '¾'], [7/8, '⅞']
-  ];
-  const intPart = Math.floor(val);
-  const frac = val - intPart;
-  if (frac < 0.04) return String(intPart === 0 ? (Math.round(val * 100) / 100) : intPart);
-  for (const [f, sym] of niceMap) {
-    if (Math.abs(frac - f) < 0.05) return intPart > 0 ? intPart + ' ' + sym : sym;
-  }
-  // Round to 1 decimal otherwise
-  return String(Math.round(val * 10) / 10);
-}
-
 function renderIngredients(ingredients, multiplier) {
   const ing = document.getElementById('r-ingredients');
-  ing.innerHTML = (ingredients||[]).map(i => {
-    if ((i.n||'').startsWith('—')) return '<div class="ingredient-divider">' + i.n.replace(/^—\s*/,'') + '</div>';
+  ing.innerHTML = expandIngredients(ingredients).map(i => {
+    if (i.divider != null) return '<div class="ingredient-divider">' + escHtml(i.divider) + '</div>';
     const amt = scaleAmount(i.a || '', multiplier);
-    return '<div class="ingredient-item"><span class="ingredient-name">' + i.n + '</span><span class="ingredient-amount">' + amt + '</span></div>';
+    return '<div class="ingredient-item"><span class="ingredient-name">' + escHtml(i.n) + '</span><span class="ingredient-amount">' + escHtml(amt) + '</span></div>';
   }).join('');
 }
 
@@ -776,14 +582,14 @@ function openRecipe(r) {
   document.getElementById('r-emoji').textContent = r.emoji || '🍽️';
   document.getElementById('r-title').textContent = r.title;
   document.getElementById('r-yield').textContent = r.yield || '';
-  document.getElementById('r-note-wrap').innerHTML = r.note ? '<div class="note-box">💡 ' + r.note + '</div>' : '';
+  document.getElementById('r-note-wrap').innerHTML = r.note ? '<div class="note-box">💡 ' + escHtml(r.note) + '</div>' : '';
 
   renderIngredients(r.ingredients, 1);
   showNutritionPanel(r.ingredients); // async, updates panel when data loads
 
   const steps = document.getElementById('r-steps');
   steps.innerHTML = (r.steps||[]).map((s,i) =>
-    '<div class="step-item"><div class="step-num">'+(i+1)+'</div><div class="step-text">'+s+'</div></div>'
+    '<div class="step-item"><div class="step-num">'+(i+1)+'</div><div class="step-text">'+escHtml(s)+'</div></div>'
   ).join('');
 
   show('recipe-screen');
@@ -892,7 +698,7 @@ window.saveRecipe = async function() {
 
   const steps = [...document.querySelectorAll('.step-row textarea')].map(t=>t.value.trim()).filter(Boolean);
 
-  const id = editingId || title.toLowerCase().replace(/[^а-яa-z0-9]/gi,'-').replace(/-+/g,'-') + '-' + Date.now();
+  const id = editingId || slugify(title);
 
   const recipe = {
     id, emoji: selectedEmoji, title,
@@ -926,6 +732,7 @@ window.closeEditor = function() {
 
 window.goHome = function() {
   window.currentRecipe = null;
+  nutritionRenderToken++; // отменяем незавершённый рендер панели калорийности
   document.getElementById('r-nutrition-wrap').innerHTML = '';
   renderCards();
   show('home');
@@ -939,8 +746,6 @@ function show(id) {
   });
   if (id==='home') document.getElementById('home').style.display='flex';
 }
-
-function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 </script>
 </body>
 </html>

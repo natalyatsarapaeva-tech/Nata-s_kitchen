@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>📸 Умный загрузчик рецептов</title>
   <style>
     :root {
@@ -211,29 +211,10 @@
 <div id="toast"></div>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyD1uWPrp12lvpyBzXCOq9IrMuTU4uOTRao",
-  authDomain: "natas-kitchen.firebaseapp.com",
-  projectId: "natas-kitchen",
-  storageBucket: "natas-kitchen.firebasestorage.app",
-  messagingSenderId: "756908196325",
-  appId: "1:756908196325:web:0ca8d4e6f853c1cb436f0c"
-};
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-const EMOJIS = ['🍳','🥞','🧇','🫓','🧁','🎂','🍰','🥧','🍋','🍯','🍓','🫐','🍅','🥕','🥦','🍆','🫑','🥔','🧀','🐟','🍗','🥩','🫕','🍝','🍛','🍜','🫙','🥗','🍲','🍮','🍦','🌿','🔥','🥢','🍕'];
-const TAGS = [
-  {id:'breakfast',label:'🌅 Завтраки'},{id:'soup',label:'🍲 Супы'},
-  {id:'salad',label:'🥗 Салаты'},{id:'veggie',label:'🥦 Овощи'},
-  {id:'meat',label:'🥩 Мясо'},{id:'chicken',label:'🍗 Курица'},
-  {id:'fish',label:'🐟 Рыба'},{id:'pasta',label:'🍝 Паста'},
-  {id:'baking',label:'🧁 Выпечка'},{id:'dessert',label:'🍮 Десерты'},
-  {id:'icecream',label:'🍦 Мороженое'},
-];
+import { db, doc, setDoc } from './js/firebase.js';
+import { EMOJIS, TAGS } from './js/constants.js';
+import { escHtml as esc, normalizeIngName, slugify, getOpenAIKey, setOpenAIKey } from './js/utils.js';
+import { callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
 
 // ── STATE ──
 let images = []; // [{base64, mediaType, dataUrl}]
@@ -242,11 +223,10 @@ let selectedTags = [];
 let currentMode = 'photo';
 
 // ── API KEY ──
-const savedKey = localStorage.getItem('openai_key') || localStorage.getItem('openai_api_key');
+const savedKey = getOpenAIKey();
 if (savedKey) document.getElementById('api-key').value = savedKey;
 document.getElementById('api-key').addEventListener('change', e => {
-  const v = e.target.value.trim();
-  if (v) { localStorage.setItem('openai_key', v); localStorage.setItem('openai_api_key', v); }
+  setOpenAIKey(e.target.value);
 });
 
 // ── MODE SWITCH ──
@@ -378,6 +358,7 @@ async function callGPT(apiKey, content) {
       body: JSON.stringify({
         model: 'gpt-4o',
         max_tokens: 2500,
+        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content }
@@ -499,7 +480,7 @@ window.saveToFirebase = async function() {
 
   const steps = [...document.querySelectorAll('.step-row textarea')].map(t => t.value.trim()).filter(Boolean);
 
-  const id = title.toLowerCase().replace(/[^a-zа-яё0-9]/gi,'-').replace(/-+/g,'-').replace(/^-|-$/g,'') + '-' + Date.now();
+  const id = slugify(title);
 
   const recipe = {
     id, emoji: selectedEmoji, title,
@@ -542,58 +523,26 @@ window.saveToFirebase = async function() {
 };
 
 // ── NUTRITION AUTO-LOOKUP ──
-function normalizeIngName(name) {
-  return name.toLowerCase().replace(/[^Ѐ-ӿa-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-const NUTRITION_GPT_PROMPT = `Ты диетолог. Верни ОДИН JSON-объект (без markdown, без пояснений), где каждый ключ — название ингредиента точно как в запросе, значение — объект:
-- kcal: число (ккал на 100г)
-- protein: число (г белков на 100г)
-- fat: число (г жиры на 100г)
-- carbs: число (г углеводов на 100г)
-- unitG: вес ОДНОГО среднего экземпляра в граммах — ОБЯЗАТЕЛЬНО для любого ингредиента который считают штуками: овощи, фрукты, яйца, грибы и т.п. Примеры: яйцо=60, картофель=150, морковь=80, лук=100, свёкла=200, болгарский перец=150, помидор=100, огурец=100, кабачок=250, яблоко=150. Для сыпучих и жидких — null.
-Одно десятичное. Данные для сырых продуктов по USDA.`;
-
 async function lookupAndSaveNutrition(ingredients, apiKey) {
-  const names = ingredients.filter(i => !(i.n||'').startsWith('—') && i.n).map(i => i.n);
+  const names = expandIngredients(ingredients).filter(i => i.n).map(i => i.n);
   if (!names.length) return;
 
   const missing = [];
   for (const name of names) {
-    const key = normalizeIngName(name);
-    const snap = await getDoc(doc(db, 'nutrition', key));
-    if (!snap.exists()) missing.push(name);
+    const existing = await getNutritionDoc(normalizeIngName(name));
+    if (!existing) missing.push(name);
   }
   if (!missing.length) return;
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'gpt-4o', max_tokens: 2000,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: NUTRITION_GPT_PROMPT },
-        { role: 'user', content: 'Верни JSON с данными для всех этих ингредиентов: ' + missing.join(', ') }
-      ]
-    })
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  const result = JSON.parse(data.choices[0].message.content);
-
+  const result = await callNutritionGPT(missing, apiKey);
   for (const [name, vals] of Object.entries(result)) {
-    if (!vals || vals.kcal == null) continue;
-    const key = normalizeIngName(name);
-    await setDoc(doc(db, 'nutrition', key), {
-      kcal: +vals.kcal, protein: +vals.protein, fat: +vals.fat, carbs: +vals.carbs,
-      ...(vals.unitG ? { unitG: +vals.unitG } : {})
-    });
+    const payload = nutritionPayload(vals);
+    if (!payload) continue;
+    await saveNutritionDoc(normalizeIngName(name), payload);
   }
 }
 
 // ── HELPERS ──
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 window.toast = function(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
