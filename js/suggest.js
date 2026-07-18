@@ -200,6 +200,10 @@ export function filterCandidates(recipes, opts) {
     if (opts.want?.length) {
       if (matchWantedIngredients(r, opts.want).length < wantedThreshold(opts.want.length)) return false;
     }
+    // Исключённые продукты семьи (аллергии и т.п.) — жёстко, не ослабляется
+    if (opts.exclude?.length) {
+      if (matchWantedIngredients(r, opts.exclude).length > 0) return false;
+    }
     return true;
   });
 }

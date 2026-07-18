@@ -214,6 +214,7 @@
 
 <script type="module">
 import { db, doc, setDoc } from './js/firebase.js';
+import { ownerId } from './js/store.js';
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml as esc, normalizeIngName, slugify, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
@@ -520,6 +521,7 @@ window.saveToFirebase = async function() {
     yield: document.getElementById('r-yield').value.trim(),
     note: document.getElementById('r-note').value.trim(),
     tags: selectedTags, ingredients, steps,
+    createdBy: ownerId(),
     ...(servingsVal > 0 ? { servings: servingsVal } : {}),
     ...(parsedRecipe?.attrs ? { attrs: parsedRecipe.attrs } : {}),
   };
