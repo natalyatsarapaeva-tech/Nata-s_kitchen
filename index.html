@@ -161,6 +161,12 @@
     .idea-btn:active{transform:scale(.96);}
     #idea-screen{display:none;min-height:100vh;flex-direction:column;}
     .idea-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+    .mood-runner{position:relative;display:flex;background:var(--white);border:2px solid var(--warm);border-radius:24px;padding:4px;margin-bottom:6px;}
+    .mood-thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc((100% - 8px)/3);background:var(--brown);border-radius:20px;transition:transform .25s ease,opacity .2s;opacity:0;}
+    .mood-runner.set .mood-thumb{opacity:1;}
+    .mood-stop{flex:1;position:relative;z-index:1;background:none;border:none;padding:9px 4px;border-radius:20px;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--text-soft);cursor:pointer;transition:color .2s;white-space:nowrap;}
+    .mood-stop.on{color:var(--cream);}
+    .mood-caption{font-size:11px;color:var(--text-soft);margin-bottom:14px;min-height:14px;}
     .idea-card{background:var(--white);border-radius:18px;padding:20px;box-shadow:0 3px 16px var(--shadow);margin-top:8px;}
     .idea-emoji{font-size:52px;line-height:1;}
     .idea-title{font-family:'Playfair Display',serif;font-size:22px;color:var(--brown);font-weight:700;margin-top:8px;line-height:1.2;}
@@ -297,12 +303,14 @@
       <button class="tab" data-v="45" onclick="setIdeaOpt('maxMin',45,this)">до 45 мин</button>
       <button class="tab" data-v="" onclick="setIdeaOpt('maxMin',null,this)">неважно</button>
     </div>
-    <div class="section-label">Настроение</div>
-    <div class="idea-chips" id="idea-mood-chips">
-      <button class="tab" data-v="light" onclick="setIdeaOpt('mood','light',this)">🥗 полегче</button>
-      <button class="tab" data-v="hearty" onclick="setIdeaOpt('mood','hearty',this)">🍖 посытнее</button>
-      <button class="tab" data-v="" onclick="setIdeaOpt('mood',null,this)">неважно</button>
+    <div class="section-label">Сытность</div>
+    <div class="mood-runner" id="mood-runner">
+      <div class="mood-thumb" id="mood-thumb"></div>
+      <button class="mood-stop" data-v="light" onclick="setMood('light')" type="button">🥗 полегче</button>
+      <button class="mood-stop" data-v="normal" onclick="setMood('normal')" type="button">🍽 обычное</button>
+      <button class="mood-stop" data-v="hearty" onclick="setMood('hearty')" type="button">🍖 сытное</button>
     </div>
+    <div class="mood-caption" id="mood-caption"></div>
     <div id="idea-card-wrap"></div>
   </div>
 </div>
@@ -689,7 +697,30 @@ function syncIdeaChips() {
     .forEach(b => b.classList.toggle('active', b.dataset.v === String(val ?? '')));
   sync('idea-meal-chips', ideaOpts.meal);
   sync('idea-time-chips', ideaOpts.maxMin);
-  sync('idea-mood-chips', ideaOpts.mood);
+  syncMoodRunner();
+}
+
+const MOOD_CAPTIONS = {
+  light: 'только лёгкое: овощи, молочное, рыба и морепродукты · повторный тап — сброс',
+  normal: 'блюда обычной сытности · повторный тап — сброс',
+  hearty: 'сытные, плотные блюда · повторный тап — сброс',
+};
+
+function syncMoodRunner() {
+  const order = ['light', 'normal', 'hearty'];
+  const idx = order.indexOf(ideaOpts.mood);
+  document.getElementById('mood-runner').classList.toggle('set', idx >= 0);
+  document.querySelectorAll('.mood-stop').forEach((b, i) => b.classList.toggle('on', i === idx));
+  if (idx >= 0) document.getElementById('mood-thumb').style.transform = `translateX(${idx * 100}%)`;
+  document.getElementById('mood-caption').textContent =
+    idx >= 0 ? MOOD_CAPTIONS[ideaOpts.mood] : 'неважно — нажми, чтобы выбрать';
+}
+
+window.setMood = function(val) {
+  ideaOpts.mood = ideaOpts.mood === val ? null : val; // повторный тап — сброс
+  ideaShown = [];
+  syncMoodRunner();
+  rollIdea();
 }
 
 window.setIdeaOpt = function(key, val, btn) {
@@ -701,15 +732,15 @@ window.setIdeaOpt = function(key, val, btn) {
 }
 
 const RELAXED_TEXT = {
-  mood: 'под настроение ничего не нашлось — показываю без него',
   time: 'в лимит времени ничего не уложилось — показываю без лимита',
   repeat: 'варианты закончились — иду по второму кругу',
 };
 
-window.rollIdea = function() {
+window.rollIdea = async function() {
   currentSurprise = null;
   const wrap = document.getElementById('idea-card-wrap');
-  const res = pickSuggestion(allRecipes, ideaOpts, ideaShown);
+  await ensureDict(); // ккал нужны для строгой классификации сытности
+  const res = pickSuggestion(allRecipes, { ...ideaOpts, dict: ingredientDict }, ideaShown);
   if (!res) {
     wrap.innerHTML = `<div class="idea-card"><div class="idea-empty">🤷 Под эти условия в твоей коллекции ничего нет.<br>Попробуй «Удиви меня» — поищем новое.</div>
       <div class="idea-actions"><button class="idea-act outline" onclick="surpriseMe()">🌍 Удиви меня</button></div></div>`;
@@ -825,8 +856,9 @@ window.surpriseMe = async function() {
 
   const crit = [{ breakfast: 'завтрак', lunch: 'обед', dinner: 'ужин' }[ideaOpts.meal] || 'ужин'];
   if (ideaOpts.maxMin) crit.push(`общее время не дольше ${ideaOpts.maxMin} минут`);
-  if (ideaOpts.mood === 'light') crit.push('лёгкое блюдо');
-  if (ideaOpts.mood === 'hearty') crit.push('сытное блюдо');
+  if (ideaOpts.mood === 'light') crit.push('лёгкое блюдо: овощи, молочное, рыба или морепродукты, мало жира и сахара');
+  if (ideaOpts.mood === 'normal') crit.push('блюдо обычной сытности');
+  if (ideaOpts.mood === 'hearty') crit.push('сытное плотное блюдо');
 
   const userMsg = (avoid) => `Критерии: ${crit.join(', ')}.
 Уже есть в коллекции (НЕ предлагай похожее):

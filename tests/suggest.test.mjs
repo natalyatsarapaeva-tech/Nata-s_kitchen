@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mealTypeFromClock, mealTypesForRecipe, recipeMinutes,
-  filterCandidates, scoreRecipe, pickWeighted, pickSuggestion,
+  effectiveHeaviness, filterCandidates, scoreRecipe, pickWeighted, pickSuggestion,
   whyLine, isSimilar, similarInCatalog, catalogDigest
 } from '../js/suggest.js';
+import { buildDict } from '../js/nutrition-core.js';
 
 const DAY = 86400000;
 const NOW = Date.parse('2026-07-18T18:00:00Z');
@@ -50,19 +51,65 @@ const CATALOG = [
   { id: 'cake', title: 'Торт', tags: ['dessert'], meta: '~90 мин' },
 ];
 
-test('filterCandidates: приём пищи, время, настроение', () => {
+test('effectiveHeaviness: мясо никогда не лёгкое, даже без разметки', () => {
+  // колбаски: немигрированный мясной рецепт → обычное, не лёгкое
+  assert.equal(effectiveHeaviness({ tags: ['meat'] }), 'medium');
+  // гуляш/фрикадельки: мясо с меткой medium → обычное
+  assert.equal(effectiveHeaviness({ tags: ['meat'], attrs: { mainProtein: 'beef', heaviness: 'medium' } }), 'medium');
+  // жаркое с меткой heavy → сытное
+  assert.equal(effectiveHeaviness({ tags: ['meat'], attrs: { heaviness: 'heavy' } }), 'heavy');
+  // GPT ошибочно назвал свинину лёгкой — правила не пускают
+  assert.equal(effectiveHeaviness({ attrs: { mainProtein: 'pork', heaviness: 'light' } }), 'medium');
+  // курица — не лёгкое по определению пользователя
+  assert.equal(effectiveHeaviness({ tags: ['chicken'] }), 'medium');
+});
+
+test('effectiveHeaviness: лёгкое — овощи/молочное/рыба/морепродукты', () => {
+  assert.equal(effectiveHeaviness({ tags: ['salad'] }), 'light');
+  assert.equal(effectiveHeaviness({ tags: ['veggie'] }), 'light');
+  assert.equal(effectiveHeaviness({ tags: ['fish'] }), 'light');
+  assert.equal(effectiveHeaviness({ attrs: { mainProtein: 'seafood' } }), 'light');
+  assert.equal(effectiveHeaviness({ attrs: { mainProtein: 'dairy' } }), 'light');
+  // но метка medium от GPT уважается
+  assert.equal(effectiveHeaviness({ tags: ['fish'], attrs: { mainProtein: 'fish', heaviness: 'medium' } }), 'medium');
+  // десерты не бывают лёгкими (сахар)
+  assert.equal(effectiveHeaviness({ tags: ['dessert'] }), 'medium');
+  assert.equal(effectiveHeaviness({ tags: ['baking'], attrs: { mainProtein: 'none' } }), 'medium');
+});
+
+test('effectiveHeaviness: калории на порцию переопределяют класс', () => {
+  const dict = buildDict({
+    'лосось': { kcal: 208, protein: 20, fat: 13, carbs: 0 },
+    'сливочное масло': { kcal: 717, protein: 0.8, fat: 81, carbs: 0.1 },
+  });
+  // жирная рыба в масле: 300г лосося + 100г масла на 1 порцию → >550 ккал → сытное
+  const fatty = { tags: ['fish'], servings: 1, ingredients: [
+    { n: 'Лосось', a: '300 г', qty: 300, unit: 'g', ing: 'лосось' },
+    { n: 'Сливочное масло', a: '100 г', qty: 100, unit: 'g', ing: 'сливочное масло' },
+  ]};
+  assert.equal(effectiveHeaviness(fatty, dict), 'heavy');
+  // скромная порция рыбы → лёгкое
+  const lean = { tags: ['fish'], servings: 2, ingredients: [
+    { n: 'Лосось', a: '300 г', qty: 300, unit: 'g', ing: 'лосось' },
+  ]};
+  assert.equal(effectiveHeaviness(lean, dict), 'light');
+});
+
+test('filterCandidates: приём пищи, время, строгая сытность', () => {
   const dinner = filterCandidates(CATALOG, { meal: 'dinner' });
   assert.deepEqual(dinner.map(r => r.id), ['soup', 'fresh', 'never', 'heavy']);
   // лимит времени: без известного времени — исключаются
   const quick = filterCandidates(CATALOG, { meal: 'dinner', maxMin: 30 });
   assert.deepEqual(quick.map(r => r.id), ['soup', 'fresh']);
-  // полегче — исключает heavy, неразмеченные проходят
+  // полегче — строго: только салат; мясное «never» больше не проходит
   const light = filterCandidates(CATALOG, { meal: 'dinner', mood: 'light' });
-  assert.ok(!light.map(r => r.id).includes('heavy'));
-  assert.ok(light.map(r => r.id).includes('never'));
-  // посытнее — исключает light, но не unknown
+  assert.deepEqual(light.map(r => r.id), ['fresh']);
+  // обычное — суп (без мяса в тегах) и немигрированное мясо
+  const normal = filterCandidates(CATALOG, { meal: 'dinner', mood: 'normal' });
+  assert.deepEqual(normal.map(r => r.id), ['soup', 'never']);
+  // сытное — только heavy
   const hearty = filterCandidates(CATALOG, { meal: 'dinner', mood: 'hearty' });
-  assert.ok(hearty.map(r => r.id).includes('heavy'));
+  assert.deepEqual(hearty.map(r => r.id), ['heavy']);
 });
 
 test('scoreRecipe: давность доминирует, недавнее штрафуется', () => {
@@ -96,21 +143,30 @@ test('pickSuggestion: базовый подбор и исключение пок
   assert.notEqual(res2.recipe.id, 'heavy');
 });
 
-test('pickSuggestion: честное ослабление mood → time → repeat', () => {
-  // только heavy проходит по времени 40, но mood=light его исключает → relaxed:mood
+test('pickSuggestion: сытность никогда не ослабляется', () => {
+  // только мясное heavy, а выбрано «полегче» → честный null, а не подмена
   const onlyHeavy = [CATALOG[3]];
-  const r1 = pickSuggestion(onlyHeavy, { meal: 'dinner', mood: 'light' }, [], NOW, () => 0);
-  assert.equal(r1.recipe.id, 'heavy');
-  assert.equal(r1.relaxed, 'mood');
+  assert.equal(pickSuggestion(onlyHeavy, { meal: 'dinner', mood: 'light' }, [], NOW, () => 0), null);
+  // исчерпали лёгкое рероллами → второй круг ТОЛЬКО по лёгкому, мясо не подсовывается
+  const r1 = pickSuggestion(CATALOG, { meal: 'dinner', mood: 'light' }, ['fresh'], NOW, () => 0);
+  assert.equal(r1.recipe.id, 'fresh');
+  assert.equal(r1.relaxed, 'repeat');
+});
+
+test('pickSuggestion: ослабление времени сохраняет сытность', () => {
   // ничего не влезает в 10 минут → relaxed:time
   const r2 = pickSuggestion(CATALOG, { meal: 'dinner', maxMin: 10 }, [], NOW, () => 0);
   assert.ok(r2.recipe);
   assert.equal(r2.relaxed, 'time');
+  // время ослабили, но «полегче» удержали: только салат
+  const r3 = pickSuggestion(CATALOG, { meal: 'dinner', maxMin: 10, mood: 'light' }, [], NOW, () => 0);
+  assert.equal(r3.recipe.id, 'fresh');
+  assert.equal(r3.relaxed, 'time');
   // всё показано → второй круг
   const shown = ['soup', 'fresh', 'never', 'heavy'];
-  const r3 = pickSuggestion(CATALOG, { meal: 'dinner' }, shown, NOW, () => 0);
-  assert.ok(r3.recipe);
-  assert.equal(r3.relaxed, 'repeat');
+  const r4 = pickSuggestion(CATALOG, { meal: 'dinner' }, shown, NOW, () => 0);
+  assert.ok(r4.recipe);
+  assert.equal(r4.relaxed, 'repeat');
   // пустой каталог → null
   assert.equal(pickSuggestion([], { meal: 'dinner' }, [], NOW, () => 0), null);
 });
