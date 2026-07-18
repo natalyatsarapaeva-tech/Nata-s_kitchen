@@ -201,6 +201,7 @@
     .week-day-label{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--amber);font-weight:700;margin-bottom:6px;}
     .week-slot{background:var(--white);border-radius:14px;padding:10px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px var(--shadow);margin-bottom:6px;}
     .week-slot.locked{border:2px solid var(--amber);}
+    .week-slot.reheat{background:var(--cream);border:1px dashed var(--warm);box-shadow:none;}
     .ws-meal{font-size:11px;color:var(--text-soft);width:52px;flex-shrink:0;}
     .ws-emoji{font-size:22px;flex-shrink:0;}
     .ws-info{flex:1;min-width:0;cursor:pointer;}
@@ -401,6 +402,7 @@
 
     <label class="field-label">Что планируем</label>
     <div class="meal-checks">
+      <label><input type="checkbox" id="f-breakfast"/> Завтраки</label>
       <label><input type="checkbox" id="f-lunch"/> Обеды</label>
       <label><input type="checkbox" id="f-dinner" checked/> Ужины</label>
     </div>
@@ -462,7 +464,8 @@ import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, pa
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition } from './js/nutrition.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan } from './js/store.js';
-import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals } from './js/planner.js';
+import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor } from './js/planner.js';
+import { isBatchDish } from './js/suggest.js';
 
 // ── STATE ──
 let allRecipes = [];
@@ -909,6 +912,7 @@ window.rollIdea = async function() {
       <div class="idea-title">${escHtml(r.title)}</div>
       <div class="idea-meta">${escHtml(r.meta || '')}${min ? ` · ⏱ ~${min} мин` : ''}<span id="idea-kcal"></span></div>
       <div class="idea-why">💡 ${escHtml(whyLine(r))}</div>
+      ${isBatchDish(r) ? '<div class="idea-matched" style="color:var(--amber)">🍳 удобно впрок: сегодня + завтра + ❄ заморозка</div>' : ''}
       ${matched.length ? `<div class="idea-matched">✔ использует: ${escHtml(matched.join(', '))}</div>` : ''}
       ${relaxedNote ? `<div class="idea-relaxed">⚠ ${relaxedNote}</div>` : ''}
       <div class="idea-actions">
@@ -1166,7 +1170,10 @@ window.weekReroll = async function(slotId) {
   const next = rerollSlot(allRecipes, profileForPlanner(), currentPlan.slots || {}, slotId, ingredientDict);
   if (!next) return;
   currentPlan.slots = currentPlan.slots || {};
+  clearBatchLinks(currentPlan.slots, slotId); // старые разогревы этого слота
   currentPlan.slots[slotId] = next;
+  const r = allRecipes.find(x => x.id === next.recipeId);
+  applyBatchLink(currentPlan.slots, profileForPlanner(), slotId, r); // новое батч-блюдо → связка
   await persistPlan();
   renderWeek();
 }
@@ -1180,6 +1187,7 @@ window.weekLock = async function(slotId) {
 }
 
 window.weekRemove = async function(slotId) {
+  clearBatchLinks(currentPlan.slots, slotId);
   currentPlan.slots[slotId] = { recipeId: null, locked: false };
   await persistPlan();
   renderWeek();
@@ -1224,12 +1232,19 @@ function renderSlot(s, byId) {
   const kcal = hasData
     ? (perServing ? `${Math.round(perServing.kcal)} ккал/порц` : `${Math.round(totals.kcal)} ккал всего`)
     : '';
-  return `<div class="week-slot${slot.locked ? ' locked' : ''}">
+  let subLine = kcal;
+  if (slot.kind === 'batch') {
+    const f = batchFactor(r, profileForPlanner());
+    subLine = `🍳 готовим ×${f}: сегодня + завтра + ❄ заморозка${kcal ? ' · ' + kcal : ''}`;
+  } else if (slot.kind === 'reheat') {
+    subLine = `♨ разогрев — готовили вчера${kcal ? ' · ' + kcal : ''}`;
+  }
+  return `<div class="week-slot${slot.locked ? ' locked' : ''}${slot.kind === 'reheat' ? ' reheat' : ''}">
     <span class="ws-meal">${MEAL_LABELS[s.meal]}</span>
-    <span class="ws-emoji">${escHtml(r.emoji || '🍽️')}</span>
+    <span class="ws-emoji">${slot.kind === 'reheat' ? '♨' : escHtml(r.emoji || '🍽️')}</span>
     <div class="ws-info" onclick="weekOpen('${escHtml(r.id)}')">
       <div class="ws-title">${escHtml(r.title)}</div>
-      ${kcal ? `<div class="ws-kcal">${kcal}</div>` : ''}
+      ${subLine ? `<div class="ws-kcal">${subLine}</div>` : ''}
     </div>
     <button class="ws-btn" onclick="weekLock('${s.id}')" title="Закрепить">${slot.locked ? '🔒' : '🔓'}</button>
     <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Другой вариант">🎲</button>
@@ -1247,7 +1262,7 @@ function renderWeekTotals(byId) {
 
 function renderShopping(byId) {
   const box = document.getElementById('shopping-list');
-  const items = aggregateShopping(currentPlan.slots, byId, ingredientDict);
+  const items = aggregateShopping(currentPlan.slots, byId, ingredientDict, profileForPlanner());
   if (!items.length) {
     box.innerHTML = '<div class="idea-empty">Сгенерируй неделю — список соберётся сам</div>';
     return;
@@ -1283,6 +1298,7 @@ window.addFamMember = () => addFamMemberRow('', 1);
 window.openFamily = async function() {
   await ensureHousehold();
   document.getElementById('f-name').value = household.name || '';
+  document.getElementById('f-breakfast').checked = !!household.planMeals?.includes('breakfast');
   document.getElementById('f-lunch').checked = !!household.planMeals?.includes('lunch');
   document.getElementById('f-dinner').checked = household.planMeals?.includes('dinner') ?? true;
   document.getElementById('f-exclude').value = household.excludeText || '';
@@ -1302,6 +1318,7 @@ window.saveFamily = async function() {
     coeff: parseFloat(row.querySelector('.fm-coeff').value) || 1,
   })).filter(m => m.name);
   const planMeals = [];
+  if (document.getElementById('f-breakfast').checked) planMeals.push('breakfast');
   if (document.getElementById('f-lunch').checked) planMeals.push('lunch');
   if (document.getElementById('f-dinner').checked) planMeals.push('dinner');
   const rhythm = {};

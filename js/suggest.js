@@ -70,12 +70,13 @@ const RE_BREAST = /грудк/;
 const RE_LEGUMES = /фасол|чечевиц|(^|\s)нут[а]?(\s|$)|(^|\s)горох|бобы|бобов/;
 const RE_PASTA = /макарон|спагетт|лингвин|фузилл|пенне|фарфалл|тальятел|феттуч|лазань|паппардел|вермишел|ньокк|(^|\s)орзо(\s|$)|лапш|букатин|ригатон|равиол|тортеллин|каннеллон/;
 
-export function effectiveHeaviness(r, dict = null) {
-  const label = r.attrs?.heaviness || null;
+const RE_TOMATO = /томат|помидор/;
+const RE_MUSHROOM = /шампиньон|(^|\s)гриб|вешенк|лисичк|подберез|подосинов|белые грибы/;
+
+// Общие сигналы рецепта по названиям ингредиентов, тегам и attrs.
+export function recipeSignals(r) {
   const tags = r.tags || [];
   const protein = r.attrs?.mainProtein || null;
-
-  // Названия ингредиентов: исходный текст + канонический ключ
   const ings = expandIngredients(r.ingredients)
     .filter(i => i.n)
     .map(i => (normalizeIngName(i.n) + ' ' + (i.ing || '')).trim());
@@ -88,11 +89,23 @@ export function effectiveHeaviness(r, dict = null) {
     || anyIng(RE_POULTRY) || anyIng(RE_MEAT_OTHER)
     || ['chicken'].includes(protein)
     || tags.includes('meat') || tags.includes('chicken');
-  const hasFish = anyIng(RE_FISH) || tags.includes('fish')
-    || ['fish', 'seafood'].includes(protein);
-  const hasBreast = anyIng(RE_BREAST);
-  const hasLegumes = anyIng(RE_LEGUMES);
-  const hasPasta = anyIng(RE_PASTA) || tags.includes('pasta');
+  return {
+    hasHeavyMeat,
+    hasAnyMeat,
+    hasFish: anyIng(RE_FISH) || tags.includes('fish') || ['fish', 'seafood'].includes(protein),
+    hasBreast: anyIng(RE_BREAST),
+    hasLegumes: anyIng(RE_LEGUMES),
+    hasPasta: anyIng(RE_PASTA) || tags.includes('pasta'),
+    hasTomato: anyIng(RE_TOMATO),
+    hasMushroom: anyIng(RE_MUSHROOM),
+  };
+}
+
+export function effectiveHeaviness(r, dict = null) {
+  const label = r.attrs?.heaviness || null;
+  const tags = r.tags || [];
+  const protein = r.attrs?.mainProtein || null;
+  const { hasHeavyMeat, hasAnyMeat, hasFish, hasBreast, hasLegumes, hasPasta } = recipeSignals(r);
 
   const perServing = dict ? computeRecipeNutrition(r, dict).perServing : null;
   const kcal = perServing?.kcal ?? null;
@@ -133,6 +146,30 @@ export function effectiveHeaviness(r, dict = null) {
   if (veggieish && !tags.includes('baking') && lowEnergy && label !== 'medium') return 'light';
 
   return 'medium';
+}
+
+// ── Батч-блюда: «готовим один раз — едим три раза» ──
+// Ужин сегодня + обед/ужин завтра + 1 порция в заморозку. Список форматов
+// задан пользователем; детекция по названию блюда + сигналам ингредиентов.
+
+// Безусловные форматы: завтраки впрок, запеканки, зимние закуски, кислые супы
+const RE_BATCH_TITLE = /оладь|оладуш|вафл|маффин|запеканк|драник|сырник|чизкейк|винегрет|оливье|под шубой|рассольник/;
+const RE_BATCH_STEW = /гуляш|бефстроган|жарко[ей]|оссобуко|особукко|рагу|карри|стью|stew|соус/;
+const RE_SHCHI = /(^|\s)щи(\s|$)/;
+
+export function isBatchDish(r) {
+  const title = normalizeIngName(r.title || '');
+  const tags = r.tags || [];
+  if (RE_BATCH_TITLE.test(title) || RE_SHCHI.test(title)) return true;
+
+  const s = recipeSignals(r);
+  // мясные и птичьи рагу/соусы: гуляш, бефстроганов, жаркое, карри…
+  if (s.hasAnyMeat && RE_BATCH_STEW.test(title)) return true;
+  // супы с мясом и грибные супы
+  if (tags.includes('soup') && (s.hasAnyMeat || s.hasMushroom)) return true;
+  // мясо/птица в томатном соусе (кроме салатов)
+  if (s.hasAnyMeat && s.hasTomato && !tags.includes('salad')) return true;
+  return false;
 }
 
 // ── Фильтры ──

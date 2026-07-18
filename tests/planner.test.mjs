@@ -124,3 +124,102 @@ test('filterCandidates: exclude — жёсткий фильтр с морфол�
   assert.deepEqual(filterCandidates(rs, { exclude: ['шампиньон'] }).map(r => r.id), ['b']);
   assert.deepEqual(filterCandidates(rs, { exclude: [] }).map(r => r.id), ['a', 'b']);
 });
+
+// ── Батч-кукинг ──
+test('isBatchDish: список форматов пользователя', async () => {
+  const { isBatchDish } = await import('../js/suggest.js');
+  // безусловные: завтраки впрок, запеканки, закуски, рассольник
+  for (const title of ['Оладьи кефирные', 'Вафли бельгийские', 'Маффины с черникой',
+    'Творожная запеканка', 'Овощная запеканка', 'Драники', 'Сырники', 'Чизкейк классический',
+    'Винегрет', 'Оливье', 'Сельдь под шубой', 'Рассольник', 'Щи из свежей капусты']) {
+    assert.ok(isBatchDish({ title }), title + ' должен быть батчем');
+  }
+  // мясные рагу и соусы
+  assert.ok(isBatchDish({ title: 'Гуляш', ingredients: [{ n: 'Говядина', a: '500 г' }] }));
+  assert.ok(isBatchDish({ title: 'Бефстроганов', tags: ['meat'] }));
+  assert.ok(isBatchDish({ title: 'Карри с курицей', ingredients: [{ n: 'Курица', a: '400 г' }] }));
+  assert.ok(isBatchDish({ title: 'Мясной соус болоньезе', tags: ['meat'] }));
+  // овощное карри без мяса — НЕ батч по правилу рагу
+  assert.ok(!isBatchDish({ title: 'Овощи в соусе карри', tags: ['veggie'],
+    ingredients: [{ n: 'Брокколи', a: '100 г' }] }));
+  // супы с мясом и грибные
+  assert.ok(isBatchDish({ title: 'Борщ', tags: ['soup'], ingredients: [{ n: 'Говядина', a: '400 г' }] }));
+  assert.ok(isBatchDish({ title: 'Грибной суп', tags: ['soup'], ingredients: [{ n: 'Шампиньоны', a: '300 г' }] }));
+  assert.ok(!isBatchDish({ title: 'Овощной суп', tags: ['soup'], ingredients: [{ n: 'Морковь', a: '2 шт' }] }));
+  // мясо в томатном соусе
+  assert.ok(isBatchDish({ title: 'Голубцы', tags: ['meat'],
+    ingredients: [{ n: 'Индейка', a: '500 г' }, { n: 'Помидоры в собственном соку', a: '400 г' }] }));
+  // обычные блюда — не батч
+  assert.ok(!isBatchDish({ title: 'Запечённый лосось', tags: ['fish'], ingredients: [{ n: 'Лосось', a: '1 кг' }] }));
+  assert.ok(!isBatchDish({ title: 'Овощной салат', tags: ['salad'], ingredients: [{ n: 'Огурец', a: '2 шт' }] }));
+});
+
+test('generateWeek: батч-блюдо занимает разогрев следующего дня', () => {
+  const catalog = [
+    { id: 'gulyash', title: 'Гуляш', tags: ['meat'], meta: '~90 мин',
+      lastCookedAt: new Date(NOW - 60 * 86400000).toISOString(),
+      ingredients: [{ n: 'Говядина', a: '500 г', qty: 500, unit: 'g', ing: 'говядина' }] },
+    ...Array.from({ length: 8 }, (_, i) => ({
+      id: `v${i}`, title: `Овощи ${i}`, tags: ['veggie'], meta: '~20 мин',
+      ingredients: [{ n: `Овощ${i}`, a: '100 г' }] })),
+  ];
+  const profile = { planMeals: ['lunch', 'dinner'], rhythm: {}, members: [{ name: 'а', coeff: 1 }] };
+  const slots = generateWeek(catalog, profile, {}, null, NOW, () => 0);
+  // гуляш побеждает по давности → пн ужин? найдём его слот готовки
+  const cookEntry = Object.entries(slots).find(([, s]) => s.recipeId === 'gulyash' && s.kind === 'batch');
+  assert.ok(cookEntry, 'батч-слот готовки существует');
+  const [cookId] = cookEntry;
+  const reheatEntry = Object.entries(slots).find(([, s]) => s.kind === 'reheat');
+  assert.ok(reheatEntry, 'слот разогрева существует');
+  const [reheatId, reheat] = reheatEntry;
+  assert.equal(reheat.recipeId, 'gulyash');
+  assert.equal(reheat.linkedTo, cookId);
+  // разогрев на следующий день, предпочтительно обед
+  const [cd] = cookId.split('_'); const [rd, rm] = reheatId.split('_');
+  assert.equal(DAYS.indexOf(rd), DAYS.indexOf(cd) + 1);
+  assert.equal(rm, 'lunch');
+});
+
+test('aggregateShopping: разогрев не дублирует закупку, батч умножает', async () => {
+  const { batchFactor } = await import('../js/planner.js');
+  const profile = { members: [{ coeff: 1 }, { coeff: 1 }] }; // семья из 2 → нужно 2*2+1=5 порций
+  const gulyash = { id: 'g', title: 'Гуляш', servings: 4,
+    ingredients: [{ n: 'Говядина', a: '500 г', qty: 500, unit: 'g', ing: 'говядина' }] };
+  assert.equal(batchFactor(gulyash, profile), 1.5); // 5/4 → 1.25 → шаг 0.5 вверх = 1.5
+  const slots = {
+    mon_dinner: { recipeId: 'g', kind: 'batch' },
+    tue_lunch: { recipeId: 'g', kind: 'reheat', linkedTo: 'mon_dinner' },
+  };
+  const items = aggregateShopping(slots, { g: gulyash }, null, profile);
+  const beef = items.find(i => i.key === 'говядина');
+  assert.equal(Math.round(beef.grams), 750); // 500 × 1.5, разогрев не добавил
+});
+
+test('clearBatchLinks + applyBatchLink', async () => {
+  const { clearBatchLinks, applyBatchLink } = await import('../js/planner.js');
+  const gulyash = { id: 'g', title: 'Гуляш', tags: ['meat'], ingredients: [{ n: 'Говядина', a: '1 кг' }] };
+  const profile = { planMeals: ['lunch', 'dinner'] };
+  let slots = { mon_dinner: { recipeId: 'g', kind: 'batch' },
+    tue_lunch: { recipeId: 'g', kind: 'reheat', linkedTo: 'mon_dinner' } };
+  clearBatchLinks(slots, 'mon_dinner');
+  assert.equal(slots.tue_lunch.recipeId, null);
+  // связка не перетирает залоченный целевой слот
+  slots = { mon_dinner: { recipeId: 'g' }, tue_lunch: { recipeId: 'other', locked: true } };
+  applyBatchLink(slots, profile, 'mon_dinner', gulyash);
+  assert.equal(slots.mon_dinner.kind, 'batch');
+  assert.equal(slots.tue_lunch.recipeId, 'other', 'залоченный слот не тронут');
+});
+
+test('buildSlots: завтраки включаются в сетку', () => {
+  const slots = buildSlots({ planMeals: ['breakfast', 'dinner'] });
+  assert.equal(slots.length, 14);
+  assert.deepEqual(slots.slice(0, 2).map(s => s.id), ['mon_breakfast', 'mon_dinner']);
+});
+
+test('findReheatSlotId: завтрак → завтрак, ужин → обед либо ужин, воскресенье → null', async () => {
+  const { findReheatSlotId } = await import('../js/planner.js');
+  assert.equal(findReheatSlotId({ planMeals: ['breakfast', 'lunch', 'dinner'] }, 'mon_breakfast'), 'tue_breakfast');
+  assert.equal(findReheatSlotId({ planMeals: ['lunch', 'dinner'] }, 'mon_dinner'), 'tue_lunch');
+  assert.equal(findReheatSlotId({ planMeals: ['dinner'] }, 'mon_dinner'), 'tue_dinner');
+  assert.equal(findReheatSlotId({ planMeals: ['dinner'] }, 'sun_dinner'), null);
+});
