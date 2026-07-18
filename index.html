@@ -156,6 +156,35 @@
     .save-btn{width:100%;padding:16px;border-radius:14px;background:var(--brown);color:var(--cream);font-size:16px;font-weight:700;border:none;cursor:pointer;font-family:'Lato',sans-serif;margin-bottom:40px;}
     .save-btn:disabled{opacity:.5;}
 
+    /* ── IDEA (что приготовить) ── */
+    .idea-btn{margin-top:16px;padding:11px 20px;border-radius:24px;background:var(--amber);color:var(--white);border:none;font-family:'Lato',sans-serif;font-size:14px;font-weight:700;cursor:pointer;position:relative;z-index:1;box-shadow:0 4px 14px rgba(212,132,58,.45);transition:transform .15s;}
+    .idea-btn:active{transform:scale(.96);}
+    #idea-screen{display:none;min-height:100vh;flex-direction:column;}
+    .idea-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+    .idea-card{background:var(--white);border-radius:18px;padding:20px;box-shadow:0 3px 16px var(--shadow);margin-top:8px;}
+    .idea-emoji{font-size:52px;line-height:1;}
+    .idea-title{font-family:'Playfair Display',serif;font-size:22px;color:var(--brown);font-weight:700;margin-top:8px;line-height:1.2;}
+    .idea-meta{font-size:13px;color:var(--text-soft);margin-top:5px;}
+    .idea-why{font-size:13px;color:var(--amber);margin-top:10px;font-style:italic;}
+    .idea-relaxed{font-size:12px;color:#c47f16;margin-top:6px;}
+    .idea-src{font-size:12px;margin-top:8px;}
+    .idea-src a{color:var(--amber);}
+    .idea-ings{margin-top:12px;font-size:13px;color:var(--text);max-height:200px;overflow-y:auto;border-top:1px solid var(--warm);padding-top:8px;}
+    .idea-ings div{padding:3px 0;display:flex;justify-content:space-between;gap:10px;}
+    .idea-ings span:last-child{color:var(--brown-light);font-weight:700;font-size:12px;white-space:nowrap;}
+    .idea-actions{display:flex;flex-direction:column;gap:8px;margin-top:16px;}
+    .idea-actions .row{display:flex;gap:8px;}
+    .idea-act{flex:1;padding:12px 8px;border-radius:12px;border:none;font-family:'Lato',sans-serif;font-size:14px;font-weight:700;cursor:pointer;transition:transform .15s;}
+    .idea-act:active{transform:scale(.97);}
+    .idea-act.primary{background:var(--brown);color:var(--cream);}
+    .idea-act.secondary{background:var(--warm);color:var(--brown);}
+    .idea-act.outline{background:transparent;border:2px dashed var(--amber);color:var(--amber);}
+    .idea-empty{text-align:center;color:var(--text-soft);padding:26px 10px;font-size:14px;line-height:1.6;}
+    .idea-loading{text-align:center;padding:30px 10px;font-size:15px;color:var(--text-soft);line-height:1.8;}
+    .idea-loading .loading-emoji{font-size:44px;}
+    .cooked-btn{margin:0 20px 12px;padding:14px;background:none;border:2px solid #27ae60;color:#27ae60;border-radius:14px;width:calc(100% - 40px);font-size:15px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;}
+    .cooked-btn:disabled{opacity:.75;}
+
     /* ── FAB GROUP ── */
     .fab-group{position:fixed;bottom:28px;right:24px;display:flex;flex-direction:column;align-items:flex-end;gap:12px;z-index:100;}
     .fab-camera{width:48px;height:48px;border-radius:50%;background:var(--amber-light);color:var(--white);font-size:22px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(212,132,58,.4);display:flex;align-items:center;justify-content:center;transition:transform .2s;}
@@ -183,6 +212,7 @@
   <div class="home-header">
     <div class="home-title">Моя кухня<br><em>любимое</em></div>
     <div class="home-subtitle" id="count-label">загрузка…</div>
+    <button class="idea-btn" onclick="openIdea()">🎲 Что приготовить?</button>
   </div>
   <div class="search-wrap">
     <div class="search-wrap-inner">
@@ -244,7 +274,37 @@
     <div class="section-label">Приготовление</div>
     <div class="steps-list stagger" id="r-steps"></div>
   </div>
+  <button class="cooked-btn" id="cooked-btn" onclick="markCookedCurrent()">✓ Я приготовил(а) это</button>
   <button class="delete-recipe-btn" onclick="deleteRecipe()">🗑 Удалить рецепт</button>
+</div>
+
+<!-- IDEA: что приготовить -->
+<div id="idea-screen">
+  <div class="recipe-header">
+    <button class="back-btn" onclick="goHome()">← Моя кухня</button>
+    <div class="recipe-title-big">🎲 Что приготовить?</div>
+  </div>
+  <div class="recipe-body">
+    <div class="section-label">Приём пищи</div>
+    <div class="idea-chips" id="idea-meal-chips">
+      <button class="tab" data-v="breakfast" onclick="setIdeaOpt('meal','breakfast',this)">🌅 Завтрак</button>
+      <button class="tab" data-v="lunch" onclick="setIdeaOpt('meal','lunch',this)">🥪 Обед</button>
+      <button class="tab" data-v="dinner" onclick="setIdeaOpt('meal','dinner',this)">🍲 Ужин</button>
+    </div>
+    <div class="section-label">Время</div>
+    <div class="idea-chips" id="idea-time-chips">
+      <button class="tab" data-v="20" onclick="setIdeaOpt('maxMin',20,this)">⏱ до 20 мин</button>
+      <button class="tab" data-v="45" onclick="setIdeaOpt('maxMin',45,this)">до 45 мин</button>
+      <button class="tab" data-v="" onclick="setIdeaOpt('maxMin',null,this)">неважно</button>
+    </div>
+    <div class="section-label">Настроение</div>
+    <div class="idea-chips" id="idea-mood-chips">
+      <button class="tab" data-v="light" onclick="setIdeaOpt('mood','light',this)">🥗 полегче</button>
+      <button class="tab" data-v="hearty" onclick="setIdeaOpt('mood','hearty',this)">🍖 посытнее</button>
+      <button class="tab" data-v="" onclick="setIdeaOpt('mood',null,this)">неважно</button>
+    </div>
+    <div id="idea-card-wrap"></div>
+  </div>
 </div>
 
 <!-- EDITOR -->
@@ -290,8 +350,9 @@
 <script type="module">
 import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
-import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, getOpenAIKey, setOpenAIKey } from './js/utils.js';
+import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition } from './js/nutrition.js';
+import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest } from './js/suggest.js';
 
 // ── STATE ──
 let allRecipes = [];
@@ -568,6 +629,10 @@ function openRecipe(r) {
   document.getElementById('r-yield').textContent = r.yield || '';
   document.getElementById('r-note-wrap').innerHTML = r.note ? '<div class="note-box">💡 ' + escHtml(r.note) + '</div>' : '';
 
+  const cookedBtn = document.getElementById('cooked-btn');
+  cookedBtn.disabled = false;
+  cookedBtn.textContent = r.timesCooked ? `✓ Я приготовил(а) это (${r.timesCooked}×)` : '✓ Я приготовил(а) это';
+
   renderIngredients(r.ingredients, 1);
   showNutritionPanel(r); // async, updates panel when data loads
 
@@ -579,6 +644,288 @@ function openRecipe(r) {
   show('recipe-screen');
   window.scrollTo(0,0);
   ['r-ingredients','r-steps'].forEach(id=>{const el=document.getElementById(id);el.classList.remove('stagger');void el.offsetWidth;el.classList.add('stagger');});
+}
+
+// ── ИСТОРИЯ ГОТОВКИ ──
+async function markCooked(r) {
+  r.lastCookedAt = new Date().toISOString();
+  r.timesCooked = (r.timesCooked || 0) + 1;
+  await setDoc(doc(db, 'recipes', r.id),
+    { lastCookedAt: r.lastCookedAt, timesCooked: r.timesCooked }, { merge: true });
+}
+
+window.markCookedCurrent = async function() {
+  const r = window.currentRecipe;
+  if (!r) return;
+  const btn = document.getElementById('cooked-btn');
+  btn.disabled = true;
+  try {
+    await markCooked(r);
+    btn.textContent = `✓ Отмечено! (${r.timesCooked}×)`;
+  } catch (e) {
+    btn.disabled = false;
+    alert('Ошибка: ' + e.message);
+  }
+}
+
+// ── ЧТО ПРИГОТОВИТЬ ──
+let ideaOpts = { meal: 'dinner', maxMin: null, mood: null };
+let ideaShown = [];       // id, показанные в этой сессии подбора
+let currentSurprise = null;
+let surpriseTitles = [];  // чтобы «Ещё вариант» не повторял предложения
+
+window.openIdea = function() {
+  ideaShown = [];
+  currentSurprise = null;
+  ideaOpts = { meal: mealTypeFromClock(new Date().getHours()), maxMin: null, mood: null };
+  syncIdeaChips();
+  show('idea-screen');
+  window.scrollTo(0, 0);
+  rollIdea();
+}
+
+function syncIdeaChips() {
+  const sync = (id, val) => document.querySelectorAll('#' + id + ' .tab')
+    .forEach(b => b.classList.toggle('active', b.dataset.v === String(val ?? '')));
+  sync('idea-meal-chips', ideaOpts.meal);
+  sync('idea-time-chips', ideaOpts.maxMin);
+  sync('idea-mood-chips', ideaOpts.mood);
+}
+
+window.setIdeaOpt = function(key, val, btn) {
+  ideaOpts[key] = val;
+  ideaShown = [];
+  btn.parentElement.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  rollIdea();
+}
+
+const RELAXED_TEXT = {
+  mood: 'под настроение ничего не нашлось — показываю без него',
+  time: 'в лимит времени ничего не уложилось — показываю без лимита',
+  repeat: 'варианты закончились — иду по второму кругу',
+};
+
+window.rollIdea = function() {
+  currentSurprise = null;
+  const wrap = document.getElementById('idea-card-wrap');
+  const res = pickSuggestion(allRecipes, ideaOpts, ideaShown);
+  if (!res) {
+    wrap.innerHTML = `<div class="idea-card"><div class="idea-empty">🤷 Под эти условия в твоей коллекции ничего нет.<br>Попробуй «Удиви меня» — поищем новое.</div>
+      <div class="idea-actions"><button class="idea-act outline" onclick="surpriseMe()">🌍 Удиви меня</button></div></div>`;
+    return;
+  }
+  const r = res.recipe;
+  if (res.relaxed === 'repeat') ideaShown = [r.id];
+  else ideaShown.push(r.id);
+  const min = recipeMinutes(r);
+  wrap.innerHTML = `
+    <div class="idea-card fade-in">
+      <span class="idea-emoji">${escHtml(r.emoji || '🍽️')}</span>
+      <div class="idea-title">${escHtml(r.title)}</div>
+      <div class="idea-meta">${escHtml(r.meta || '')}${min ? ` · ⏱ ~${min} мин` : ''}<span id="idea-kcal"></span></div>
+      <div class="idea-why">💡 ${escHtml(whyLine(r))}</div>
+      ${res.relaxed ? `<div class="idea-relaxed">⚠ ${RELAXED_TEXT[res.relaxed]}</div>` : ''}
+      <div class="idea-actions">
+        <div class="row">
+          <button class="idea-act primary" onclick="ideaCook('${escHtml(r.id)}')">✓ Готовлю!</button>
+          <button class="idea-act secondary" onclick="ideaOpen('${escHtml(r.id)}')">Открыть</button>
+        </div>
+        <div class="row">
+          <button class="idea-act secondary" onclick="rollIdea()">🎲 Ещё вариант</button>
+          <button class="idea-act outline" onclick="surpriseMe()">🌍 Удиви меня</button>
+        </div>
+      </div>
+    </div>`;
+  fillIdeaKcal(r);
+}
+
+async function fillIdeaKcal(r) {
+  await ensureDict();
+  const el = document.getElementById('idea-kcal');
+  if (!el) return; // карточку уже сменили
+  const { perServing, totals, hasData } = computeRecipeNutrition(r, ingredientDict);
+  if (!hasData) return;
+  el.textContent = perServing
+    ? ` · ${Math.round(perServing.kcal)} ккал/порц`
+    : ` · ${Math.round(totals.kcal)} ккал всего`;
+}
+
+window.ideaOpen = function(id) {
+  const r = allRecipes.find(x => x.id === id);
+  if (r) openRecipe(r);
+}
+
+window.ideaCook = async function(id) {
+  const r = allRecipes.find(x => x.id === id);
+  if (!r) return;
+  try { await markCooked(r); } catch (e) { console.error(e); }
+  openRecipe(r);
+}
+
+// ── УДИВИ МЕНЯ ──
+const SURPRISE_PROMPT = `Ты кулинарный гид. Подбери ОДИН реальный популярный рецепт (как с хороших кулинарных сайтов) под критерии пользователя. Рецепт НЕ должен быть похож ни на один из списка уже имеющихся у пользователя. Верни ТОЛЬКО валидный JSON без markdown и пояснений:
+
+{
+  "title": "Название блюда на русском",
+  "emoji": "одно подходящее эмодзи",
+  "category": "одно из: breakfast|soup|salad|veggie|meat|chicken|fish|pasta|baking|dessert|icecream",
+  "meta": "время и выход, например: ~30 мин · 4 порции",
+  "yield": "выход блюда",
+  "servings": число порций (int),
+  "note": "важный совет если есть, иначе пустая строка",
+  "ingredients": [{"n": "ингредиент", "a": "количество", "qty": число|null, "unit": "g|ml|pcs|tbsp|tsp|pinch"|null, "ing": "каноническое название: ед.число, нижний регистр", "opt": false}],
+  "steps": ["шаг 1", "шаг 2"],
+  "attrs": {"mealType": [...], "mainProtein": "...", "cuisine": "...", "activeMin": int, "totalMin": int, "heaviness": "light|medium|heavy", "spiciness": 0-3, "dietFlags": [...], "kidFriendly": bool}
+}
+
+Правила: на русском, реалистичные проверенные количества, шаги не нумеруй.`;
+
+async function callSurpriseGPT(apiKey, userMsg) {
+  const messages = [
+    { role: 'system', content: SURPRISE_PROMPT },
+    { role: 'user', content: userMsg }
+  ];
+  // Сначала модель с веб-поиском (даёт ссылку на источник), при недоступности — обычная
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: 'gpt-4o-search-preview', web_search_options: {}, max_tokens: 2500, messages })
+    });
+    if (!res.ok) throw new Error('search model unavailable');
+    const data = await res.json();
+    const msg = data.choices[0].message;
+    const url = (msg.annotations || []).find(a => a.type === 'url_citation')?.url_citation?.url || null;
+    return { parsed: parseJsonLoose(msg.content), url };
+  } catch (eSearch) {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: 'gpt-4o', response_format: { type: 'json_object' }, max_tokens: 2500, messages })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return { parsed: parseJsonLoose(data.choices[0].message.content), url: null };
+  }
+}
+
+window.surpriseMe = async function() {
+  let apiKey = getOpenAIKey();
+  if (!apiKey) {
+    apiKey = prompt('Для поиска новых рецептов нужен OpenAI API Key (сохранится в браузере):');
+    if (!apiKey) return;
+    setOpenAIKey(apiKey);
+  }
+  const wrap = document.getElementById('idea-card-wrap');
+  wrap.innerHTML = `<div class="idea-card"><div class="idea-loading"><div class="loading-emoji">🌍</div>Ищу новый рецепт…<br><small>обычно 5–15 секунд</small></div></div>`;
+
+  const crit = [{ breakfast: 'завтрак', lunch: 'обед', dinner: 'ужин' }[ideaOpts.meal] || 'ужин'];
+  if (ideaOpts.maxMin) crit.push(`общее время не дольше ${ideaOpts.maxMin} минут`);
+  if (ideaOpts.mood === 'light') crit.push('лёгкое блюдо');
+  if (ideaOpts.mood === 'hearty') crit.push('сытное блюдо');
+
+  const userMsg = (avoid) => `Критерии: ${crit.join(', ')}.
+Уже есть в коллекции (НЕ предлагай похожее):
+${catalogDigest(allRecipes)}
+${surpriseTitles.length ? 'Уже предлагал в этой сессии, не повторяй: ' + surpriseTitles.join('; ') + '.' : ''}
+${avoid ? `НЕ предлагай ничего похожего на «${avoid}».` : ''}`;
+
+  try {
+    let { parsed, url } = await callSurpriseGPT(apiKey, userMsg(null));
+    let sim = similarInCatalog(parsed, allRecipes);
+    if (sim) { // одна повторная попытка с явным исключением
+      ({ parsed, url } = await callSurpriseGPT(apiKey, userMsg(sim.title)));
+      sim = similarInCatalog(parsed, allRecipes);
+    }
+    renderSurpriseCard(parsed, url, sim);
+  } catch (e) {
+    console.error('Surprise failed:', e);
+    wrap.innerHTML = `<div class="idea-card"><div class="idea-empty">😔 Не получилось: ${escHtml(e.message)}</div>
+      <div class="idea-actions"><div class="row">
+        <button class="idea-act secondary" onclick="rollIdea()">← Из моих рецептов</button>
+        <button class="idea-act outline" onclick="surpriseMe()">Попробовать ещё</button>
+      </div></div></div>`;
+  }
+}
+
+function renderSurpriseCard(parsed, url, sim) {
+  currentSurprise = {
+    parsed: { ...parsed, ingredients: (parsed.ingredients || []).map(cleanStructuredEntry) },
+    url, saved: false, savedId: null,
+  };
+  if (parsed.title) surpriseTitles.push(parsed.title);
+  const ingsHTML = currentSurprise.parsed.ingredients.map(i =>
+    `<div><span>${escHtml(i.n)}</span><span>${escHtml(i.a || '')}</span></div>`).join('');
+  const min = parsed.attrs?.totalMin;
+  const wrap = document.getElementById('idea-card-wrap');
+  wrap.innerHTML = `
+    <div class="idea-card fade-in">
+      <span class="idea-emoji">${escHtml(parsed.emoji || '🌍')}</span>
+      <div class="idea-title">${escHtml(parsed.title || 'Без названия')}</div>
+      <div class="idea-meta">${escHtml(parsed.meta || '')}${min ? ` · ⏱ ~${min} мин` : ''}${Number(parsed.servings) > 0 ? ` · ${Number(parsed.servings)} порц.` : ''}</div>
+      <div class="idea-why">💡 новый рецепт — такого у тебя ещё нет</div>
+      ${sim ? `<div class="idea-relaxed">⚠ всё же похоже на «${escHtml(sim.title)}» из твоей коллекции</div>` : ''}
+      ${url ? `<div class="idea-src">🔗 <a href="${escHtml(url)}" target="_blank" rel="noopener">источник</a></div>`
+            : `<div class="idea-src" style="color:var(--text-soft)">✨ предложение GPT — проверь количества перед готовкой</div>`}
+      <div class="idea-ings">${ingsHTML}</div>
+      <div class="idea-actions">
+        <div class="row">
+          <button class="idea-act primary" onclick="surpriseCook()">✓ Готовлю!</button>
+          <button class="idea-act secondary" onclick="surpriseSave(true)">💾 В мои рецепты</button>
+        </div>
+        <div class="row">
+          <button class="idea-act secondary" onclick="rollIdea()">← Из моих</button>
+          <button class="idea-act outline" onclick="surpriseMe()">🌍 Ещё вариант</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveSurpriseRecipe() {
+  const p = currentSurprise.parsed;
+  const servingsVal = parseInt(p.servings, 10);
+  const recipe = {
+    id: slugify(p.title || 'новый-рецепт'),
+    emoji: p.emoji || '🌍', title: p.title || 'Без названия',
+    meta: p.meta || '', yield: p.yield || '', note: p.note || '',
+    tags: p.category ? [p.category] : [],
+    ingredients: p.ingredients, steps: p.steps || [],
+    ...(servingsVal > 0 ? { servings: servingsVal } : {}),
+    ...(p.attrs ? { attrs: p.attrs } : {}),
+    source: 'web',
+    ...(currentSurprise.url ? { sourceUrl: currentSurprise.url } : {}),
+  };
+  await setDoc(doc(db, 'recipes', recipe.id), recipe);
+  allRecipes.push(recipe);
+  allRecipes.sort((a, b) => (a.title||'').localeCompare(b.title||'', 'ru'));
+  currentSurprise.saved = true;
+  currentSurprise.savedId = recipe.id;
+  return recipe;
+}
+
+window.surpriseSave = async function(open) {
+  if (!currentSurprise) return;
+  try {
+    const r = currentSurprise.saved
+      ? allRecipes.find(x => x.id === currentSurprise.savedId)
+      : await saveSurpriseRecipe();
+    if (open) openRecipe(r);
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+window.surpriseCook = async function() {
+  if (!currentSurprise) return;
+  try {
+    const r = currentSurprise.saved
+      ? allRecipes.find(x => x.id === currentSurprise.savedId)
+      : await saveSurpriseRecipe();
+    await markCooked(r);
+    openRecipe(r);
+  } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
 window.deleteRecipe = async function() {
@@ -737,7 +1084,7 @@ window.goHome = function() {
 }
 
 function show(id) {
-  ['loading','home','recipe-screen','editor-screen'].forEach(s => {
+  ['loading','home','recipe-screen','editor-screen','idea-screen'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.style.display = (s===id) ? 'flex' : 'none';
   });

@@ -80,6 +80,26 @@ export function scaleAmount(amountStr, multiplier) {
   return parsed.prefix + formatScaledNumber(parsed.num * multiplier) + parsed.rest;
 }
 
+// Достаёт JSON-объект из ответа модели: срезает markdown-заборы и текст
+// вокруг первого/последнего фигурного блока.
+export function parseJsonLoose(raw) {
+  const clean = String(raw || '').trim()
+    .replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/\s*```$/, '').trim();
+  const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
+  return JSON.parse(start >= 0 && end > start ? clean.slice(start, end + 1) : clean);
+}
+
+// Чистит структурную строку ингредиента из ответа GPT: валидные qty/unit/ing/opt,
+// без null-полей. n/a — исходный текст.
+export function cleanStructuredEntry(e) {
+  const out = { n: (e.n || '').trim(), a: (e.a || '').trim() };
+  if (e.qty != null && !isNaN(+e.qty)) out.qty = +e.qty;
+  if (e.unit && ['g','ml','pcs','tbsp','tsp','pinch'].includes(e.unit)) out.unit = e.unit;
+  if (e.ing) out.ing = normalizeIngName(e.ing);
+  if (e.opt) out.opt = true;
+  return out;
+}
+
 // ── Ключ OpenAI ──
 const OPENAI_KEY = 'openai_key';
 

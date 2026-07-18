@@ -76,3 +76,11 @@ test('scaleAmount: масштабирование строк количеств�
   assert.equal(scaleAmount('200 г', 1), '200 г');
   assert.equal(scaleAmount('', 2), '');
 });
+
+test('parseJsonLoose: markdown-заборы и текст вокруг JSON', async () => {
+  const { parseJsonLoose } = await import('../js/utils.js');
+  assert.deepEqual(parseJsonLoose('{"a":1}'), { a: 1 });
+  assert.deepEqual(parseJsonLoose('```json\n{"a":1}\n```'), { a: 1 });
+  assert.deepEqual(parseJsonLoose('Вот рецепт:\n{"a":{"b":2}}\nПриятного!'), { a: { b: 2 } });
+  assert.throws(() => parseJsonLoose('не json'));
+});

@@ -215,7 +215,7 @@
 <script type="module">
 import { db, doc, setDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
-import { escHtml as esc, normalizeIngName, slugify, getOpenAIKey, setOpenAIKey } from './js/utils.js';
+import { escHtml as esc, normalizeIngName, slugify, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
 
 // ── STATE ──
@@ -434,20 +434,10 @@ function setStep(n, state, customText) {
 }
 
 // ── FILL EDITOR ──
-// Чистит структурную строку ингредиента от null-полей GPT.
-function cleanEntry(e) {
-  const out = { n: (e.n||'').trim(), a: (e.a||'').trim() };
-  if (e.qty != null && !isNaN(+e.qty)) out.qty = +e.qty;
-  if (e.unit && ['g','ml','pcs','tbsp','tsp','pinch'].includes(e.unit)) out.unit = e.unit;
-  if (e.ing) out.ing = normalizeIngName(e.ing);
-  if (e.opt) out.opt = true;
-  return out;
-}
-
 function fillEditor(r) {
   parsedRecipe = {
     ...r,
-    ingredients: (r.ingredients || []).map(cleanEntry),
+    ingredients: (r.ingredients || []).map(cleanStructuredEntry),
   };
   selectedEmoji = r.emoji || '🍽️';
   selectedTags = r.category ? [r.category] : [];
