@@ -1,7 +1,7 @@
 // Недельный планировщик: чистые функции (без Firebase) — тестируются в Node.
 // Заполнение сетки использует тот же скоринг, что и «Что приготовить?».
-import { pickSuggestion, isBatchDish } from './suggest.js';
-import { expandIngredients, dictLookup, entryKey, gramsForEntry, computeRecipeNutrition } from './nutrition-core.js';
+import { pickSuggestion, isBatchDish, proteinClass, effectiveHeaviness } from './suggest.js';
+import { expandIngredients, dictLookup, entryKey, gramsForEntry, computeRecipeNutrition, DEFAULT_UNIT_G } from './nutrition-core.js';
 
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const DAY_LABELS = { mon: 'Пн', tue: 'Вт', wed: 'Ср', thu: 'Чт', fri: 'Пт', sat: 'Сб', sun: 'Вс' };
@@ -40,9 +40,21 @@ export function findReheatSlotId(profile, cookSlotId) {
   return null;
 }
 
+// Следующий класс ужина по квотам: не повторяем вчерашний класс, если есть
+// выбор; из доступных берём тот, которого осталось больше.
+function nextDinnerClass(quota, lastClass) {
+  const avail = ['meat', 'fish', 'veg'].filter(c => quota[c] > 0);
+  if (!avail.length) return null;
+  const pool = avail.filter(c => c !== lastClass);
+  return (pool.length ? pool : avail).sort((a, b) => quota[b] - quota[a])[0];
+}
+
 // Заполняет незалоченные слоты недели. Залоченные сохраняются и участвуют
 // в анти-повторах. Батч-блюдо (isBatchDish) автоматически занимает слот
 // разогрева на следующий день и получает пометку заморозки одной порции.
+// Квоты ужинов (profile.dinnerQuota = {meat, fish, veg}) распределяют классы
+// по неделе без повторов подряд; мясные ужины чередуются между «обычное»
+// и «сытное», начиная со среднего.
 export function generateWeek(recipes, profile, existingSlots = {}, dict = null, now = Date.now(), rand = Math.random) {
   const slots = buildSlots(profile);
   const exclude = profile?.exclude || [];
@@ -59,14 +71,68 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     }
   }
 
+  // Квоты ужинов: залоченные ужины уже расходуют свою квоту
+  const q = profile?.dinnerQuota || null;
+  const quota = { meat: Math.max(0, +q?.meat || 0), fish: Math.max(0, +q?.fish || 0), veg: Math.max(0, +q?.veg || 0) };
+  const quotaActive = quota.meat + quota.fish + quota.veg > 0;
+  let lastDinnerClass = null;
+  let meatMood = 'normal'; // чередование мясных ужинов: средний → сытный → средний…
+  if (quotaActive) {
+    for (const s of slots) {
+      if (s.meal !== 'dinner' || !out[s.id]?.recipeId) continue;
+      const r = byId[out[s.id].recipeId];
+      if (!r) continue;
+      const cls = proteinClass(r);
+      if (quota[cls] > 0) quota[cls]--;
+      if (cls === 'meat') {
+        meatMood = effectiveHeaviness(r, dict) === 'heavy' ? 'normal' : 'hearty';
+      }
+    }
+  }
+
   for (const s of slots) {
-    if (out[s.id]) continue;
+    if (out[s.id]) {
+      if (s.meal === 'dinner' && out[s.id].recipeId) {
+        lastDinnerClass = proteinClass(byId[out[s.id].recipeId] || {});
+      }
+      continue;
+    }
     const maxMin = s.meal === 'dinner' ? (profile?.rhythm?.[s.day] ?? null) : null;
-    const res = pickSuggestion(recipes, { meal: s.meal, maxMin, exclude, dict }, [...used], now, rand);
+    const base = { meal: s.meal, maxMin, exclude, dict };
+
+    // Свежая попытка: повтор блюда ради сытности хуже, чем свежее без неё
+    const freshPick = opts => {
+      const p = pickSuggestion(recipes, opts, [...used], now, rand);
+      return p && p.relaxed !== 'repeat' ? p : null;
+    };
+
+    let res = null;
+    let quotaCls = null;
+    if (s.meal === 'dinner' && quotaActive) {
+      const cls = nextDinnerClass(quota, lastDinnerClass);
+      if (cls) {
+        if (cls === 'meat') {
+          // мясной ужин: сначала нужная сытность, потом любое свежее мясо
+          res = freshPick({ ...base, protein: 'meat', mood: meatMood })
+             || freshPick({ ...base, protein: 'meat' })
+             || pickSuggestion(recipes, { ...base, protein: 'meat' }, [...used], now, rand);
+        } else {
+          res = freshPick({ ...base, protein: cls })
+             || pickSuggestion(recipes, { ...base, protein: cls }, [...used], now, rand);
+        }
+        if (res) {
+          quotaCls = cls;
+          quota[cls]--;
+          if (cls === 'meat') meatMood = meatMood === 'normal' ? 'hearty' : 'normal';
+        }
+      }
+    }
+    if (!res) res = pickSuggestion(recipes, base, [...used], now, rand);
     if (!res) { out[s.id] = { recipeId: null, locked: false }; continue; }
 
     const r = res.recipe;
     out[s.id] = { recipeId: r.id, locked: false };
+    if (s.meal === 'dinner') lastDinnerClass = proteinClass(r);
     // каталог исчерпан → новый круг анти-повторов, а не один фаворит трижды
     if (res.relaxed === 'repeat') used.length = 0;
     used.push(r.id);
@@ -75,7 +141,15 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
       out[s.id].kind = 'batch';
       const reheatId = findReheatSlotId(profile, s.id);
       if (reheatId && !out[reheatId]) {
-        out[reheatId] = { recipeId: r.id, locked: false, kind: 'reheat', linkedTo: s.id };
+        // разогрев в ужин тоже расходует квоту класса; если квота исчерпана —
+        // разогрев не ставим (порции уходят в заморозку)
+        const rMeal = reheatId.split('_')[1];
+        const cls = proteinClass(r);
+        const allowed = rMeal !== 'dinner' || !quotaActive || quota[cls] >= 1;
+        if (allowed) {
+          out[reheatId] = { recipeId: r.id, locked: false, kind: 'reheat', linkedTo: s.id };
+          if (rMeal === 'dinner' && quotaActive && quota[cls] > 0) quota[cls]--;
+        }
       }
     }
   }
@@ -113,6 +187,8 @@ export function batchFactor(recipe, profile) {
 }
 
 // Реролл одного слота: исключает рецепты, уже занятые в других слотах.
+// Класс белка текущего блюда сохраняется (мясной ужин остаётся мясным),
+// с откатом до «любого», если в классе больше нечего предложить.
 export function rerollSlot(recipes, profile, slots, slotId, dict = null, now = Date.now(), rand = Math.random) {
   const [day, meal] = slotId.split('_');
   const usedElsewhere = Object.entries(slots)
@@ -121,7 +197,10 @@ export function rerollSlot(recipes, profile, slots, slotId, dict = null, now = D
   const current = slots[slotId]?.recipeId;
   if (current) usedElsewhere.push(current); // не предлагать то же самое
   const maxMin = meal === 'dinner' ? (profile?.rhythm?.[day] ?? null) : null;
-  const res = pickSuggestion(recipes, { meal, maxMin, exclude: profile?.exclude || [], dict }, usedElsewhere, now, rand);
+  const base = { meal, maxMin, exclude: profile?.exclude || [], dict };
+  const cur = current ? recipes.find(r => r.id === current) : null;
+  const res = (cur ? pickSuggestion(recipes, { ...base, protein: proteinClass(cur) }, [...usedElsewhere], now, rand) : null)
+    || pickSuggestion(recipes, base, usedElsewhere, now, rand);
   return res ? { recipeId: res.recipe.id, locked: false } : null;
 }
 
@@ -129,6 +208,28 @@ export function rerollSlot(recipes, profile, slots, slotId, dict = null, now = D
 // Агрегирует ингредиенты всех блюд недели, исключая pantry staples.
 // Структурированные qty/unit суммируются (шт отдельно, граммы отдельно);
 // неразобранное — списком исходных строк.
+
+// ── Канонизация ключа покупки ──
+// «Молоко тёплое», «молоко (или растительное молоко)» и «молоко» — один
+// товар; «яйца»/«яйцо»/«яиц» — один товар. Порядок: alias справочника →
+// отрезать « или …» → убрать модификаторы → alias ещё раз → встроенные группы.
+
+const SHOPPING_MODIFIERS = /^(тёплое|теплое|тёплый|теплый|тёплая|теплая|холодное|холодный|холодная|ледяная|ледяной|горячее|горячая|свежий|свежая|свежее|свежие|спелый|спелая|спелое|спелые|крупный|крупная|крупное|крупные|мелкий|мелкая|мелкие|небольшой|небольшая|небольшие|маленький|маленькая|маленькие|большой|большая|большие|сырой|сырая|сырые|молодой|молодая|молодые|средний|средняя|средние)$/;
+const SHOPPING_GROUPS = [
+  [/^яйц|^яиц/, 'яйцо'],
+];
+
+export function canonicalShoppingKey(key, dict) {
+  let k = dict?.alias?.[key] || key;
+  k = k.split(' или ')[0].trim();
+  const words = k.split(/\s+/).filter(w => !SHOPPING_MODIFIERS.test(w));
+  if (words.length) k = words.join(' ');
+  k = dict?.alias?.[k] || k;
+  for (const [re, canon] of SHOPPING_GROUPS) {
+    if (re.test(k.split(' ')[0])) return canon;
+  }
+  return k;
+}
 
 export function aggregateShopping(slots, recipesById, dict, profile = null) {
   const items = new Map();
@@ -139,14 +240,20 @@ export function aggregateShopping(slots, recipesById, dict, profile = null) {
     const factor = slot.kind === 'batch' ? batchFactor(r, profile) : 1;
     for (const i of expandIngredients(r.ingredients)) {
       if (!i.n) continue;
-      const key = entryKey(i);
-      const d = dictLookup(dict, key);
+      const rawKey = entryKey(i);
+      const key = canonicalShoppingKey(rawKey, dict);
+      const d = dictLookup(dict, key) || dictLookup(dict, rawKey);
       if (d?.isPantryStaple) continue;
+      // штучный продукт (яйца, овощи с весом штуки) — покупается штуками
+      const unitG = d?.unitG || DEFAULT_UNIT_G[key] || DEFAULT_UNIT_G[rawKey] || null;
       let item = items.get(key);
       if (!item) {
-        item = { key, label: i.n, category: d?.category || 'other', pcs: 0, grams: 0, lines: [] };
+        item = { key, label: i.n, category: d?.category || 'other', pcs: 0, grams: 0, lines: [], unitG };
         items.set(key, item);
       }
+      if (!item.unitG && unitG) item.unitG = unitG;
+      // самое короткое написание — обычно самое каноничное («молоко», не «Молоко тёплое»)
+      if (i.n.length < item.label.length) item.label = i.n;
       if (i.qty != null && i.unit === 'pcs') item.pcs += i.qty * factor;
       else {
         const g = gramsForEntry(i, d);
@@ -161,10 +268,15 @@ export function aggregateShopping(slots, recipesById, dict, profile = null) {
 
 export function shoppingAmountLabel(item) {
   const parts = [];
-  if (item.pcs) parts.push(`${Math.round(item.pcs * 10) / 10} шт`);
-  if (item.grams) parts.push(item.grams >= 1000
-    ? `${Math.round(item.grams / 100) / 10} кг`
-    : `${Math.round(item.grams)} г`);
+  if (item.unitG && (item.pcs || item.grams)) {
+    // штучный товар: граммы переводим в штуки, округляем вверх до целой
+    parts.push(`${Math.ceil(item.pcs + item.grams / item.unitG)} шт`);
+  } else {
+    if (item.pcs) parts.push(`${Math.round(item.pcs * 10) / 10} шт`);
+    if (item.grams) parts.push(item.grams >= 1000
+      ? `${Math.round(item.grams / 100) / 10} кг`
+      : `${Math.round(item.grams)} г`);
+  }
   for (const l of item.lines) parts.push(l);
   return parts.join(' + ') || '';
 }
