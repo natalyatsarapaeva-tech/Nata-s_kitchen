@@ -167,6 +167,9 @@
     .mood-stop{flex:1;position:relative;z-index:1;background:none;border:none;padding:9px 4px;border-radius:20px;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--text-soft);cursor:pointer;transition:color .2s;white-space:nowrap;}
     .mood-stop.on{color:var(--cream);}
     .mood-caption{font-size:11px;color:var(--text-soft);margin-bottom:14px;min-height:14px;}
+    .want-input{width:100%;padding:12px 14px;border-radius:14px;border:2px solid var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:14px;color:var(--text);outline:none;margin-bottom:6px;}
+    .want-input:focus{border-color:var(--amber);}
+    .idea-matched{font-size:12px;color:#27ae60;margin-top:6px;}
     .idea-card{background:var(--white);border-radius:18px;padding:20px;box-shadow:0 3px 16px var(--shadow);margin-top:8px;}
     .idea-emoji{font-size:52px;line-height:1;}
     .idea-title{font-family:'Playfair Display',serif;font-size:22px;color:var(--brown);font-weight:700;margin-top:8px;line-height:1.2;}
@@ -311,6 +314,9 @@
       <button class="mood-stop" data-v="hearty" onclick="setMood('hearty')" type="button">🍖 сытное</button>
     </div>
     <div class="mood-caption" id="mood-caption"></div>
+    <div class="section-label">Из каких продуктов? <span style="opacity:.65;letter-spacing:0;text-transform:none">(опционально)</span></div>
+    <input class="want-input" id="want-input" placeholder="Кабачки, куриная грудка, помидор, тхина…" oninput="onWantInput()" autocomplete="off"/>
+    <div class="mood-caption" id="want-caption"></div>
     <div id="idea-card-wrap"></div>
   </div>
 </div>
@@ -360,7 +366,7 @@ import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.j
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition } from './js/nutrition.js';
-import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest } from './js/suggest.js';
+import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold } from './js/suggest.js';
 
 // ── STATE ──
 let allRecipes = [];
@@ -686,10 +692,22 @@ window.openIdea = function() {
   ideaShown = [];
   currentSurprise = null;
   ideaOpts = { meal: mealTypeFromClock(new Date().getHours()), maxMin: null, mood: 'normal' };
+  document.getElementById('want-input').value = '';
+  document.getElementById('want-caption').textContent = '';
   syncIdeaChips();
   show('idea-screen');
   window.scrollTo(0, 0);
   rollIdea();
+}
+
+let wantDebounce = null;
+window.onWantInput = function() {
+  clearTimeout(wantDebounce);
+  wantDebounce = setTimeout(() => { ideaShown = []; rollIdea(); }, 450);
+}
+
+function currentWanted() {
+  return parseWantedIngredients(document.getElementById('want-input').value);
 }
 
 function syncIdeaChips() {
@@ -738,9 +756,16 @@ window.rollIdea = async function() {
   currentSurprise = null;
   const wrap = document.getElementById('idea-card-wrap');
   await ensureDict(); // ккал нужны для строгой классификации сытности
-  const res = pickSuggestion(allRecipes, { ...ideaOpts, dict: ingredientDict }, ideaShown);
+  const want = currentWanted();
+  document.getElementById('want-caption').textContent = want.length
+    ? `нужно совпадение: хотя бы ${wantedThreshold(want.length) === 2 ? 'два продукта' : 'один продукт'} из ${want.length}`
+    : '';
+  const res = pickSuggestion(allRecipes, { ...ideaOpts, dict: ingredientDict, want }, ideaShown);
   if (!res) {
-    wrap.innerHTML = `<div class="idea-card"><div class="idea-empty">🤷 Под эти условия в твоей коллекции ничего нет.<br>Попробуй «Удиви меня» — поищем новое.</div>
+    const emptyText = want.length
+      ? '🤷 С этими продуктами под заданные условия ничего нет.<br>Попробуй «Удиви меня» — подберём новый рецепт именно из них.'
+      : '🤷 Под эти условия в твоей коллекции ничего нет.<br>Попробуй «Удиви меня» — поищем новое.';
+    wrap.innerHTML = `<div class="idea-card"><div class="idea-empty">${emptyText}</div>
       <div class="idea-actions"><button class="idea-act outline" onclick="surpriseMe()">🌍 Удиви меня</button></div></div>`;
     return;
   }
@@ -748,12 +773,14 @@ window.rollIdea = async function() {
   if (res.relaxed === 'repeat') ideaShown = [r.id];
   else ideaShown.push(r.id);
   const min = recipeMinutes(r);
+  const matched = matchWantedIngredients(r, want);
   wrap.innerHTML = `
     <div class="idea-card fade-in">
       <span class="idea-emoji">${escHtml(r.emoji || '🍽️')}</span>
       <div class="idea-title">${escHtml(r.title)}</div>
       <div class="idea-meta">${escHtml(r.meta || '')}${min ? ` · ⏱ ~${min} мин` : ''}<span id="idea-kcal"></span></div>
       <div class="idea-why">💡 ${escHtml(whyLine(r))}</div>
+      ${matched.length ? `<div class="idea-matched">✔ использует: ${escHtml(matched.join(', '))}</div>` : ''}
       ${res.relaxed ? `<div class="idea-relaxed">⚠ ${RELAXED_TEXT[res.relaxed]}</div>` : ''}
       <div class="idea-actions">
         <div class="row">
@@ -857,6 +884,11 @@ window.surpriseMe = async function() {
   if (ideaOpts.mood === 'light') crit.push('лёгкое блюдо: овощи, молочное, рыба или морепродукты, мало жира и сахара');
   if (ideaOpts.mood === 'normal') crit.push('блюдо обычной сытности');
   if (ideaOpts.mood === 'hearty') crit.push('сытное плотное блюдо');
+  const want = currentWanted();
+  if (want.length) {
+    const need = wantedThreshold(want.length) === 2 ? 'не менее двух' : 'хотя бы один';
+    crit.push(`ОБЯЗАТЕЛЬНО используй ${need} из этих продуктов: ${want.join(', ')}`);
+  }
 
   const userMsg = (avoid) => `Критерии: ${crit.join(', ')}.
 Уже есть в коллекции (НЕ предлагай похожее):
