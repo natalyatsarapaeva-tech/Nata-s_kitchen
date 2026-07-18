@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔧 Миграция рецептов — структурные данные</title>
+  <style>
+    :root{--cream:#fdf6ec;--warm:#f5e6d0;--brown:#5c3d2e;--amber:#d4843a;--amber-light:#e8a85f;--text:#2e1f14;--text-soft:#7a5c4a;--white:#fff;--shadow:rgba(92,61,46,0.15);--green:#27ae60;--red:#e74c3c;}
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:system-ui,sans-serif;background:var(--cream);color:var(--text);min-height:100vh;}
+    .header{background:var(--brown);padding:40px 24px 24px;}
+    .back-link{display:inline-flex;color:var(--amber-light);font-size:13px;margin-bottom:14px;text-decoration:none;}
+    .header h1{color:var(--cream);font-size:22px;}
+    .header p{color:var(--amber-light);font-size:13px;margin-top:6px;max-width:640px;}
+    .body{padding:20px;max-width:760px;margin:0 auto;}
+    .card{background:var(--white);border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 2px 12px var(--shadow);}
+    .card-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--amber);font-weight:700;display:block;margin-bottom:8px;}
+    .key-input{width:100%;padding:10px 14px;border-radius:10px;border:2px solid var(--warm);font-size:14px;font-family:monospace;outline:none;}
+    .key-input:focus{border-color:var(--amber);}
+    .btn{padding:12px 20px;border-radius:12px;border:none;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:transform .15s;}
+    .btn:active{transform:scale(.97);}
+    .btn:disabled{opacity:.5;cursor:default;}
+    .btn-primary{background:var(--brown);color:var(--cream);width:100%;padding:14px;font-size:15px;border-radius:14px;}
+    .btn-secondary{background:var(--warm);color:var(--brown);width:100%;padding:12px;border-radius:12px;margin-bottom:8px;}
+    .stats-row{display:flex;gap:12px;margin-bottom:14px;}
+    .stat-card{flex:1;background:var(--warm);border-radius:12px;padding:12px;text-align:center;}
+    .stat-num{font-size:24px;font-weight:700;color:var(--brown);}
+    .stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-soft);margin-top:3px;}
+    .progress-bar{background:var(--warm);border-radius:8px;height:8px;margin:10px 0;overflow:hidden;}
+    .progress-fill{background:var(--amber);height:100%;width:0%;transition:width .3s;border-radius:8px;}
+    #status-msg{font-size:13px;color:var(--text-soft);padding:6px 0;min-height:18px;}
+    .r-row{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--warm);cursor:pointer;}
+    .r-row:last-child{border-bottom:none;}
+    .r-emoji{font-size:22px;flex-shrink:0;}
+    .r-title{flex:1;font-size:14px;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;flex-shrink:0;}
+    .badge.ok{background:#e8f7ee;color:var(--green);}
+    .badge.miss{background:#fdeaea;color:var(--red);}
+    .badge.warn{background:#fdf3e0;color:#c47f16;}
+    .detail{background:var(--cream);border-radius:12px;padding:12px;margin:4px 0 10px;display:none;}
+    .detail.open{display:block;}
+    .detail table{width:100%;border-collapse:collapse;font-size:12px;}
+    .detail th{text-align:left;color:var(--amber);font-size:10px;text-transform:uppercase;padding:4px;border-bottom:1px solid var(--warm);}
+    .detail td{padding:4px;border-bottom:1px solid var(--warm);vertical-align:middle;}
+    .detail input,.detail select{padding:4px 6px;border-radius:6px;border:1px solid var(--warm);font-size:12px;width:100%;background:var(--white);}
+    .detail input.qty{width:64px;}
+    .save-detail-btn{margin-top:10px;padding:8px 16px;border-radius:10px;border:none;background:var(--brown);color:var(--cream);font-size:12px;font-weight:700;cursor:pointer;}
+    .review-note{font-size:11px;color:#c47f16;margin-top:6px;}
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <a class="back-link" href="../index.html">← Моя кухня</a>
+  <h1>🔧 Миграция рецептов</h1>
+  <p>Переводит свободный текст ингредиентов в структуру (количество · единица · канонический ингредиент), определяет число порций и атрибуты для планировщика. Исходный текст не изменяется.</p>
+</div>
+
+<div class="body">
+  <div class="card">
+    <label class="card-label">OpenAI API Key</label>
+    <input class="key-input" type="password" id="api-key" placeholder="sk-…" autocomplete="off"/>
+  </div>
+
+  <div class="card">
+    <div id="stats-row" class="stats-row" style="display:none">
+      <div class="stat-card"><div class="stat-num" id="stat-total">0</div><div class="stat-label">рецептов</div></div>
+      <div class="stat-card"><div class="stat-num" id="stat-done">0</div><div class="stat-label">мигрировано</div></div>
+      <div class="stat-card"><div class="stat-num" id="stat-review">0</div><div class="stat-label">на проверку</div></div>
+    </div>
+    <button class="btn btn-secondary" onclick="scan()">🔍 Сканировать рецепты</button>
+    <button class="btn btn-primary" id="migrate-btn" onclick="migrateAll()" style="display:none">✨ Мигрировать через GPT</button>
+    <div id="progress-wrap" style="display:none"><div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div></div>
+    <div id="status-msg"></div>
+  </div>
+
+  <div id="list-card" class="card" style="display:none">
+    <label class="card-label">Рецепты (клик — детали и правка)</label>
+    <div id="r-list"></div>
+  </div>
+</div>
+
+<script type="module">
+import { db, collection, getDocs, doc, setDoc } from '../js/firebase.js';
+import { escHtml, normalizeIngName, getOpenAIKey, setOpenAIKey } from '../js/utils.js';
+import { expandIngredients, callJsonGPT } from '../js/nutrition-core.js';
+
+let recipes = [];         // все рецепты
+let dictByKey = {};       // справочник nutrition как загружен
+const UNITS = ['', 'g', 'ml', 'pcs', 'tbsp', 'tsp', 'pinch'];
+
+const savedKey = getOpenAIKey();
+if (savedKey) document.getElementById('api-key').value = savedKey;
+document.getElementById('api-key').addEventListener('change', e => setOpenAIKey(e.target.value));
+
+// Рецепт считается мигрированным, когда есть servings, attrs и структура
+// хотя бы у части содержательных строк.
+function migrationState(r) {
+  const rows = expandIngredients(r.ingredients).filter(i => i.n);
+  const structured = rows.filter(i => i.qty != null || i.ing);
+  return {
+    hasServings: Number(r.servings) > 0,
+    hasAttrs: !!r.attrs,
+    structuredShare: rows.length ? structured.length / rows.length : 1,
+    needsReview: (r.needsReview || []).length,
+  };
+}
+function isMigrated(r) {
+  const s = migrationState(r);
+  return s.hasServings && s.hasAttrs && s.structuredShare > 0.5;
+}
+
+window.scan = async function() {
+  setStatus('Загружаю…');
+  const [recipesSnap, nutSnap] = await Promise.all([
+    getDocs(collection(db, 'recipes')),
+    getDocs(collection(db, 'nutrition')),
+  ]);
+  recipes = recipesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  recipes.sort((a, b) => (a.title||'').localeCompare(b.title||'', 'ru'));
+  dictByKey = {};
+  nutSnap.docs.forEach(d => { dictByKey[d.id] = d.data(); });
+  render();
+  setStatus('');
+};
+
+function render() {
+  const pending = recipes.filter(r => !isMigrated(r));
+  const review = recipes.filter(r => (r.needsReview || []).length);
+
+  document.getElementById('stats-row').style.display = 'flex';
+  document.getElementById('stat-total').textContent = recipes.length;
+  document.getElementById('stat-done').textContent = recipes.length - pending.length;
+  document.getElementById('stat-review').textContent = review.length;
+
+  const btn = document.getElementById('migrate-btn');
+  btn.style.display = pending.length ? 'block' : 'none';
+  btn.textContent = `✨ Мигрировать ${pending.length} рецептов через GPT`;
+
+  const list = document.getElementById('r-list');
+  list.innerHTML = recipes.map((r, idx) => {
+    const s = migrationState(r);
+    const badges = [
+      s.hasServings ? '<span class="badge ok">порции</span>' : '<span class="badge miss">порции</span>',
+      s.structuredShare > 0.5 ? '<span class="badge ok">структура</span>' : '<span class="badge miss">структура</span>',
+      s.hasAttrs ? '<span class="badge ok">атрибуты</span>' : '<span class="badge miss">атрибуты</span>',
+      s.needsReview ? `<span class="badge warn">проверить: ${s.needsReview}</span>` : '',
+    ].join('');
+    return `<div class="r-row" onclick="toggleDetail(${idx})">
+        <span class="r-emoji">${escHtml(r.emoji || '🍽️')}</span>
+        <span class="r-title">${escHtml(r.title || r.id)}</span>${badges}
+      </div>
+      <div class="detail" id="detail-${idx}"></div>`;
+  }).join('');
+  document.getElementById('list-card').style.display = 'block';
+}
+
+window.toggleDetail = function(idx) {
+  const el = document.getElementById(`detail-${idx}`);
+  if (el.classList.contains('open')) { el.classList.remove('open'); return; }
+  document.querySelectorAll('.detail.open').forEach(d => d.classList.remove('open'));
+  renderDetail(idx);
+  el.classList.add('open');
+};
+
+function renderDetail(idx) {
+  const r = recipes[idx];
+  const el = document.getElementById(`detail-${idx}`);
+  const rows = (r.ingredients || []).map((i, j) => `
+    <tr>
+      <td>${escHtml(i.n || '')}</td>
+      <td>${escHtml(i.a || '')}</td>
+      <td><input class="qty" data-idx="${idx}" data-j="${j}" data-f="qty" value="${i.qty != null ? i.qty : ''}"/></td>
+      <td><select data-idx="${idx}" data-j="${j}" data-f="unit">${UNITS.map(u =>
+        `<option value="${u}"${(i.unit||'')===u?' selected':''}>${u||'—'}</option>`).join('')}</select></td>
+      <td><input data-idx="${idx}" data-j="${j}" data-f="ing" value="${escHtml(i.ing || '')}"/></td>
+    </tr>`).join('');
+  const servings = Number(r.servings) > 0 ? r.servings : '';
+  const reviewHTML = (r.needsReview || []).length
+    ? `<div class="review-note">⚠ ${(r.needsReview||[]).map(escHtml).join(' · ')}</div>` : '';
+  el.innerHTML = `
+    <div style="margin-bottom:8px;font-size:12px">Порций:
+      <input class="qty" id="servings-${idx}" value="${servings}" style="width:56px"/></div>
+    <table>
+      <thead><tr><th>Ингредиент</th><th>Текст</th><th>Кол-во</th><th>Ед.</th><th>Канонич.</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${reviewHTML}
+    <button class="save-detail-btn" onclick="saveDetail(${idx})">💾 Сохранить и снять «проверить»</button>`;
+}
+
+window.saveDetail = async function(idx) {
+  const r = recipes[idx];
+  document.querySelectorAll(`#detail-${idx} [data-f]`).forEach(inp => {
+    const j = +inp.dataset.j, f = inp.dataset.f;
+    const entry = r.ingredients[j];
+    const v = inp.value.trim();
+    if (f === 'qty') { if (v && !isNaN(+v.replace(',','.'))) entry.qty = +v.replace(',','.'); else delete entry.qty; }
+    if (f === 'unit') { if (v) entry.unit = v; else delete entry.unit; }
+    if (f === 'ing') { if (v) entry.ing = normalizeIngName(v); else delete entry.ing; }
+  });
+  const sv = parseInt(document.getElementById(`servings-${idx}`).value, 10);
+  if (sv > 0) r.servings = sv; else delete r.servings;
+  delete r.needsReview;
+  const { id, ...docData } = r;
+  await setDoc(doc(db, 'recipes', r.id), { id: r.id, ...docData });
+  setStatus(`✅ «${r.title}» сохранён.`);
+  render();
+};
+
+// ── GPT МИГРАЦИЯ ──
+const MIGRATE_PROMPT = `Ты помощник по кулинарии. Тебе дают массив рецептов (id, title, yield, meta, ingredients[{n,a}]). Верни ОДИН JSON-объект: ключ — id рецепта, значение:
+{
+  "servings": число порций (int, выведи из yield/meta/названия; если реально непонятно — null),
+  "ingredients": массив ТОЙ ЖЕ ДЛИНЫ и в ТОМ ЖЕ ПОРЯДКЕ, что во входе; для каждой строки:
+    {"qty": число|null, "unit": "g|ml|pcs|tbsp|tsp|pinch"|null, "ing": "каноническое название: ед.число, нижний регистр, без лишних прилагательных", "opt": true|false},
+    для строк-разделителей (начинаются с "—") у которых после ":" есть ингредиент — разбирай этот ингредиент; для чистых разделителей верни {"qty":null,"unit":null,"ing":null,"opt":false},
+  "attrs": {"mealType":["breakfast|lunch|dinner|snack|dessert"], "mainProtein":"chicken|beef|pork|lamb|fish|seafood|legumes|eggs|dairy|none", "cuisine": строка|null, "activeMin": int|null, "totalMin": int|null, "heaviness":"light|medium|heavy", "spiciness":0-3, "dietFlags":[...], "kidFriendly": bool},
+  "needsReview": массив коротких строк-предупреждений о позициях, в которых ты не уверен (напр. "мука: не смог определить количество"); если уверен во всём — []
+}
+Единицы: штучные овощи/фрукты/яйца → pcs; "по вкусу"/"щепотка" → qty=null. Будь точен, не выдумывай количества.`;
+
+async function callMigrateGPT(batch, apiKey) {
+  const payload = batch.map(r => ({
+    id: r.id, title: r.title, yield: r.yield || '', meta: r.meta || '',
+    ingredients: (r.ingredients || []).map(i => ({ n: i.n, a: i.a })),
+  }));
+  return callJsonGPT(MIGRATE_PROMPT, JSON.stringify(payload), apiKey, 4000);
+}
+
+// Синонимы: если канонический ключ не в справочнике, а старый нормализованный
+// ключ строки — есть, дописываем канонический ключ в aliases старого документа.
+async function linkAliases(recipe) {
+  for (const i of recipe.ingredients || []) {
+    if (!i.ing || (i.n || '').startsWith('—')) continue;
+    const oldKey = normalizeIngName(i.n);
+    if (dictByKey[i.ing] || !dictByKey[oldKey] || i.ing === oldKey) continue;
+    const aliases = [...new Set([...(dictByKey[oldKey].aliases || []), i.ing])];
+    dictByKey[oldKey] = { ...dictByKey[oldKey], aliases };
+    await setDoc(doc(db, 'nutrition', oldKey), dictByKey[oldKey]);
+  }
+}
+
+window.migrateAll = async function() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  if (!apiKey) { setStatus('⚠️ Введи OpenAI API key'); return; }
+  setOpenAIKey(apiKey);
+
+  const pending = recipes.filter(r => !isMigrated(r));
+  if (!pending.length) return;
+
+  const btn = document.getElementById('migrate-btn');
+  btn.disabled = true;
+  document.getElementById('progress-wrap').style.display = 'block';
+  const fill = document.getElementById('progress-fill');
+
+  const BATCH = 3;
+  let done = 0, failed = 0;
+  for (let i = 0; i < pending.length; i += BATCH) {
+    const batch = pending.slice(i, i + BATCH);
+    setStatus(`GPT: ${i + 1}–${Math.min(i + BATCH, pending.length)} из ${pending.length}…`);
+    try {
+      const result = await callMigrateGPT(batch, apiKey);
+      for (const r of batch) {
+        const m = result[r.id];
+        if (!m) { failed++; continue; }
+        if (Number(m.servings) > 0) r.servings = Math.round(Number(m.servings));
+        if (Array.isArray(m.ingredients) && m.ingredients.length === (r.ingredients || []).length) {
+          r.ingredients = r.ingredients.map((orig, j) => {
+            const s = m.ingredients[j] || {};
+            const out = { ...orig };
+            if (s.qty != null && !isNaN(+s.qty)) out.qty = +s.qty;
+            if (s.unit && ['g','ml','pcs','tbsp','tsp','pinch'].includes(s.unit)) out.unit = s.unit;
+            if (s.ing) out.ing = normalizeIngName(s.ing);
+            if (s.opt) out.opt = true;
+            return out;
+          });
+        } else if (Array.isArray(m.ingredients)) {
+          m.needsReview = [...(m.needsReview || []), 'GPT вернул другое число строк ингредиентов — структура не применена'];
+        }
+        if (m.attrs) r.attrs = m.attrs;
+        if (Array.isArray(m.needsReview) && m.needsReview.length) r.needsReview = m.needsReview;
+        else delete r.needsReview;
+        const { id, ...docData } = r;
+        await setDoc(doc(db, 'recipes', r.id), { id: r.id, ...docData });
+        await linkAliases(r);
+        done++;
+      }
+    } catch (e) {
+      setStatus('❌ ' + e.message);
+      btn.disabled = false;
+      render();
+      return;
+    }
+    fill.style.width = `${((i + batch.length) / pending.length) * 100}%`;
+  }
+  setStatus(`✅ Готово: ${done} мигрировано${failed ? `, ${failed} пропущено (нет ответа GPT)` : ''}. Жёлтые метки — проверь вручную.`);
+  btn.disabled = false;
+  render();
+};
+
+function setStatus(m) { document.getElementById('status-msg').textContent = m; }
+</script>
+</body>
+</html>

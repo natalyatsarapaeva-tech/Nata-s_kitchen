@@ -269,6 +269,9 @@
     <label class="field-label">Выход / количество порций</label>
     <input class="field-input" id="e-yield" placeholder="4 порции"/>
 
+    <label class="field-label">Порций (число — для расчёта на порцию)</label>
+    <input class="field-input" id="e-servings" type="number" min="1" placeholder="4"/>
+
     <label class="field-label">Заметка (опционально)</label>
     <textarea class="field-input" id="e-note" placeholder="Совет, лайфхак…"></textarea>
 
@@ -288,7 +291,7 @@
 import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, getOpenAIKey, setOpenAIKey } from './js/utils.js';
-import { amountToGrams, DEFAULT_UNIT_G, callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
+import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition } from './js/nutrition.js';
 
 // ── STATE ──
 let allRecipes = [];
@@ -374,53 +377,27 @@ window.clearSearch = function() {
 }
 
 // ── NUTRITION ──
-let recipeNutritionCache = {}; // normalizedKey → data|null (null = confirmed missing)
+let ingredientDict = null;   // справочник ингредиентов, загружается один раз
+let dictPromise = null;
 let recipeTotals = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
 let nutritionRenderToken = 0; // защита от гонки при быстрой смене рецептов
 
-async function loadNutritionForRecipe(ingredients) {
-  const keys = expandIngredients(ingredients)
-    .filter(i => i.n)
-    .map(i => normalizeIngName(i.n));
-  const unique = [...new Set(keys)].filter(k => k && !(k in recipeNutritionCache));
-  if (!unique.length) return;
-  await Promise.all(unique.map(async k => {
-    recipeNutritionCache[k] = await getNutritionDoc(k);
-  }));
+function ensureDict() {
+  if (!dictPromise) dictPromise = loadIngredientDict().then(d => { ingredientDict = d; return d; });
+  return dictPromise;
 }
 
-async function showNutritionPanel(ingredients) {
+async function showNutritionPanel(recipe) {
   const token = ++nutritionRenderToken;
   const wrap = document.getElementById('r-nutrition-wrap');
   wrap.innerHTML = `<div class="nutrition-accordion"><button class="nutrition-toggle" type="button" disabled style="opacity:.6"><div class="nutrition-toggle-left"><span class="nutrition-toggle-label">Калорийность</span><span class="nutrition-toggle-summary">загрузка…</span></div><span class="nutrition-chevron">▼</span></button></div>`;
 
-  await loadNutritionForRecipe(ingredients);
+  await ensureDict();
   if (token !== nutritionRenderToken) return; // рецепт уже сменился
 
-  const rows = [];
-  let totalKcal = 0, totalP = 0, totalF = 0, totalC = 0;
-  let hasData = false, hasMissing = false;
-
-  expandIngredients(ingredients).forEach(i => {
-    if (!i.n) return;
-    const key = normalizeIngName(i.n);
-    const nut = recipeNutritionCache[key];
-    if (!nut) { hasMissing = true; rows.push({ name: i.n, amount: i.a, unknown: true }); return; }
-    const effectiveUnitG = nut.unitG || DEFAULT_UNIT_G[key];
-    const grams = amountToGrams(i.a, effectiveUnitG);
-    let kcal = null, p = null, f = null, c = null;
-    if (grams != null) {
-      kcal = nut.kcal * grams / 100;
-      p = nut.protein * grams / 100;
-      f = nut.fat * grams / 100;
-      c = nut.carbs * grams / 100;
-      totalKcal += kcal; totalP += p; totalF += f; totalC += c;
-      hasData = true;
-    }
-    rows.push({ name: i.n, amount: i.a, grams, kcal, p, f, c });
-  });
-
-  recipeTotals = { kcal: totalKcal, protein: totalP, fat: totalF, carbs: totalC };
+  const { rows, totals, perServing, servings, hasData, hasMissing } =
+    computeRecipeNutrition(recipe, ingredientDict);
+  recipeTotals = totals;
 
   if (!hasData && !hasMissing) { wrap.innerHTML = ''; return; }
 
@@ -435,9 +412,11 @@ async function showNutritionPanel(ingredients) {
     </div>`;
   }).join('');
 
+  const perServingHTML = perServing ? `
+    <div class="nutrition-macros-row">На порцию (из ${servings}): <b>${fmt(perServing.kcal)} ккал</b> · Б${fmt(perServing.protein)} Ж${fmt(perServing.fat)} У${fmt(perServing.carbs)}г</div>` : '';
   const totalHTML = hasData ? `
-    <div class="nutrition-total-row"><span>Итого (расч.):</span><span>${fmt(totalKcal)} ккал</span></div>
-    <div class="nutrition-macros-row">Б: ${fmt(totalP)}г &nbsp;·&nbsp; Ж: ${fmt(totalF)}г &nbsp;·&nbsp; У: ${fmt(totalC)}г</div>` : '';
+    <div class="nutrition-total-row"><span>Итого (расч.):</span><span>${fmt(totals.kcal)} ккал</span></div>
+    <div class="nutrition-macros-row">Б: ${fmt(totals.protein)}г &nbsp;·&nbsp; Ж: ${fmt(totals.fat)}г &nbsp;·&nbsp; У: ${fmt(totals.carbs)}г</div>${perServingHTML}` : '';
 
   const calcHTML = hasData ? `
     <div class="nutrition-divider"></div>
@@ -455,7 +434,10 @@ async function showNutritionPanel(ingredients) {
   const lookupBtn = hasMissing
     ? `<button class="nutrition-lookup-btn" id="nutrition-lookup-btn" onclick="lookupMissingNutrition()">✨ Узнать</button>` : '';
 
-  const summary = hasData ? `${fmt(totalKcal)} ккал · Б${fmt(totalP)} Ж${fmt(totalF)} У${fmt(totalC)}г` : 'нет данных';
+  const summary = hasData
+    ? (perServing ? `${fmt(perServing.kcal)} ккал/порция · всего ${fmt(totals.kcal)}`
+                  : `${fmt(totals.kcal)} ккал · Б${fmt(totals.protein)} Ж${fmt(totals.fat)} У${fmt(totals.carbs)}г`)
+    : 'нет данных';
 
   wrap.innerHTML = `
     <div class="nutrition-accordion">
@@ -517,8 +499,9 @@ window.lookupMissingNutrition = async function() {
   const recipe = window.currentRecipe;
   if (!recipe) return;
 
+  await ensureDict();
   const missing = expandIngredients(recipe.ingredients)
-    .filter(i => i.n && !recipeNutritionCache[normalizeIngName(i.n)])
+    .filter(i => i.n && !dictLookup(ingredientDict, entryKey(i)))
     .map(i => i.n);
 
   if (!missing.length) return;
@@ -531,10 +514,11 @@ window.lookupMissingNutrition = async function() {
       const payload = nutritionPayload(vals);
       if (!payload) continue;
       const key = normalizeIngName(name);
-      recipeNutritionCache[key] = payload;
+      ingredientDict.byKey[key] = payload;
+      ingredientDict.alias[key] = key;
       await saveNutritionDoc(key, payload);
     }
-    showNutritionPanel(recipe.ingredients);
+    showNutritionPanel(recipe);
   } catch (e) {
     console.error('Nutrition lookup failed:', e);
     if (btn) { btn.disabled = false; btn.textContent = '✨ Узнать'; }
@@ -585,7 +569,7 @@ function openRecipe(r) {
   document.getElementById('r-note-wrap').innerHTML = r.note ? '<div class="note-box">💡 ' + escHtml(r.note) + '</div>' : '';
 
   renderIngredients(r.ingredients, 1);
-  showNutritionPanel(r.ingredients); // async, updates panel when data loads
+  showNutritionPanel(r); // async, updates panel when data loads
 
   const steps = document.getElementById('r-steps');
   steps.innerHTML = (r.steps||[]).map((s,i) =>
@@ -616,6 +600,7 @@ window.openEditor = function(recipe) {
   document.getElementById('e-title').value = recipe ? recipe.title : '';
   document.getElementById('e-meta').value = recipe ? (recipe.meta||'') : '';
   document.getElementById('e-yield').value = recipe ? (recipe.yield||'') : '';
+  document.getElementById('e-servings').value = recipe && recipe.servings ? recipe.servings : '';
   document.getElementById('e-note').value = recipe ? (recipe.note||'') : '';
 
   // Emoji picker
@@ -691,21 +676,33 @@ window.saveRecipe = async function() {
   const title = document.getElementById('e-title').value.trim();
   if (!title) { alert('Введи название рецепта'); return; }
 
+  // Структурированные поля (qty/unit/ing) переживают правку в редакторе:
+  // неизменённые строки сохраняют их, изменённые сбрасываются до текста
+  // (перемигрируются позже).
+  const orig = editingId ? allRecipes.find(r => r.id === editingId) : null;
+  const origByKey = new Map((orig?.ingredients || []).map(i => [(i.n||'')+'|'+(i.a||''), i]));
+
   const ingredients = [...document.querySelectorAll('.ing-row')].map(row => {
     const inputs = row.querySelectorAll('input');
-    return {n: inputs[0].value.trim(), a: inputs[1].value.trim()};
+    const n = inputs[0].value.trim(), a = inputs[1].value.trim();
+    const prev = origByKey.get(n+'|'+a);
+    return prev ? { ...prev, n, a } : { n, a };
   }).filter(i => i.n);
 
   const steps = [...document.querySelectorAll('.step-row textarea')].map(t=>t.value.trim()).filter(Boolean);
 
   const id = editingId || slugify(title);
+  const servingsVal = parseInt(document.getElementById('e-servings').value, 10);
 
   const recipe = {
     id, emoji: selectedEmoji, title,
     meta: document.getElementById('e-meta').value.trim(),
     yield: document.getElementById('e-yield').value.trim(),
     note: document.getElementById('e-note').value.trim(),
-    tags: selectedTags, ingredients, steps
+    tags: selectedTags, ingredients, steps,
+    ...(servingsVal > 0 ? { servings: servingsVal } : {}),
+    ...(orig?.attrs ? { attrs: orig.attrs } : {}),
+    ...(orig?.needsReview ? { needsReview: orig.needsReview } : {}),
   };
 
   const btn = document.getElementById('save-btn');

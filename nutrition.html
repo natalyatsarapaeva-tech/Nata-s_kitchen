@@ -49,7 +49,7 @@
 <div class="header">
   <a class="back-btn" href="index.html">← Моя кухня</a>
   <div class="page-title">🥗 База калорийности</div>
-  <div class="page-sub">Питательные ценности ингредиентов</div>
+  <div class="page-sub">Питательные ценности ингредиентов · <a href="tools/migrate-recipes.html" style="color:var(--amber-light)">🔧 миграция рецептов</a></div>
 </div>
 
 <div class="body">
@@ -67,6 +67,7 @@
     </div>
     <button class="btn btn-secondary" onclick="scanAll()">🔍 Сканировать все рецепты</button>
     <button class="btn btn-secondary" id="fix-unitg-btn" onclick="fixMissingUnitG()" style="display:none">🔄 Обновить unitG (штучные ингредиенты)</button>
+    <button class="btn btn-secondary" id="enrich-btn" onclick="enrichDictionary()" style="display:none">🏷️ Обогатить справочник (категория · staple · хранение)</button>
     <button class="btn btn-primary" id="lookup-btn" onclick="lookupAllMissing()" style="display:none">✨ Заполнить отсутствующие через GPT</button>
     <div id="progress-wrap" style="display:none"><div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div></div>
     <div id="status-msg"></div>
@@ -86,10 +87,14 @@
 <script type="module">
 import { db, collection, getDocs, doc, setDoc } from './js/firebase.js';
 import { escHtml, normalizeIngName as normalize, getOpenAIKey, setOpenAIKey } from './js/utils.js';
-import { callNutritionGPT as callGPTShared, nutritionPayload, expandIngredients } from './js/nutrition.js';
+import { callNutritionGPT as callGPTShared, callJsonGPT, nutritionPayload, expandIngredients, buildDict } from './js/nutrition.js';
 
 let ingredientMap = {};  // normalizedKey → { display, count }
-let nutritionData = {};  // normalizedKey → { kcal, protein, fat, carbs, unitG? }
+let nutritionData = {};  // canonicalKey → { kcal, protein, fat, carbs, unitG?, aliases?… }
+let aliasMap = {};       // синоним → канонический ключ
+
+const canon = k => aliasMap[k] || k;
+const resolved = k => nutritionData[canon(k)];
 
 const savedKey = getOpenAIKey();
 if (savedKey) document.getElementById('api-key').value = savedKey;
@@ -106,12 +111,13 @@ window.scanAll = async function() {
 
   nutritionData = {};
   nutSnap.docs.forEach(d => { nutritionData[d.id] = d.data(); });
+  aliasMap = buildDict(nutritionData).alias;
 
   ingredientMap = {};
   recipesSnap.docs.forEach(d => {
     expandIngredients(d.data().ingredients).forEach(ing => {
       if (!ing.n) return;
-      const key = normalize(ing.n);
+      const key = ing.ing || normalize(ing.n); // канонический ключ, если рецепт мигрирован
       if (!key) return;
       if (!ingredientMap[key]) ingredientMap[key] = { display: ing.n, count: 0 };
       ingredientMap[key].count++;
@@ -119,7 +125,7 @@ window.scanAll = async function() {
   });
 
   const keys = Object.keys(ingredientMap);
-  const foundCount = keys.filter(k => nutritionData[k]).length;
+  const foundCount = keys.filter(k => resolved(k)).length;
   const missingCount = keys.length - foundCount;
 
   document.getElementById('stats-row').style.display = 'flex';
@@ -133,11 +139,18 @@ window.scanAll = async function() {
     btn.textContent = `✨ Заполнить ${missingCount} отсутствующих через GPT`;
   }
 
-  const noUnitGCount = keys.filter(k => nutritionData[k] && !nutritionData[k].unitG).length;
+  const noUnitGCount = [...new Set(keys.map(canon))].filter(k => nutritionData[k] && !nutritionData[k].unitG).length;
   if (noUnitGCount > 0) {
     const fixBtn = document.getElementById('fix-unitg-btn');
     fixBtn.style.display = 'block';
     fixBtn.textContent = `🔄 Обновить unitG для ${noUnitGCount} ингредиентов`;
+  }
+
+  const noCategoryCount = Object.keys(nutritionData).filter(k => !nutritionData[k].category).length;
+  if (noCategoryCount > 0) {
+    const enrichBtn = document.getElementById('enrich-btn');
+    enrichBtn.style.display = 'block';
+    enrichBtn.textContent = `🏷️ Обогатить ${noCategoryCount} записей (категория · staple · хранение)`;
   }
 
   renderTable(keys);
@@ -146,13 +159,13 @@ window.scanAll = async function() {
 
 function renderTable(keys) {
   keys = [...keys].sort((a, b) => {
-    const am = !nutritionData[a], bm = !nutritionData[b];
+    const am = !resolved(a), bm = !resolved(b);
     if (am !== bm) return am ? -1 : 1;
     return a.localeCompare(b, 'ru');
   });
   const tbody = document.getElementById('ing-tbody');
   tbody.innerHTML = keys.map(k => {
-    const nut = nutritionData[k];
+    const nut = resolved(k);
     const info = ingredientMap[k];
     const escapedKey = escHtml(k.replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
     if (nut) {
@@ -197,7 +210,7 @@ async function saveNutritionResult(result, batch) {
 }
 
 window.lookupAllMissing = async function() {
-  const missing = Object.keys(ingredientMap).filter(k => !nutritionData[k]);
+  const missing = Object.keys(ingredientMap).filter(k => !resolved(k));
   if (!missing.length) return;
 
   const btn = document.getElementById('lookup-btn');
@@ -227,7 +240,7 @@ window.lookupAllMissing = async function() {
   }
 
   const keys = Object.keys(ingredientMap);
-  const foundCount = keys.filter(k => nutritionData[k]).length;
+  const foundCount = keys.filter(k => resolved(k)).length;
   document.getElementById('stat-found').textContent = foundCount;
   document.getElementById('stat-missing').textContent = keys.length - foundCount;
   renderTable(keys);
@@ -245,7 +258,7 @@ window.lookupOne = async function(key) {
     const result = await callGPT([displayName]);
     await saveNutritionResult(result, [key]);
     renderTable(Object.keys(ingredientMap));
-    const found = Object.keys(ingredientMap).filter(k => nutritionData[k]).length;
+    const found = Object.keys(ingredientMap).filter(k => resolved(k)).length;
     document.getElementById('stat-found').textContent = found;
     document.getElementById('stat-missing').textContent = Object.keys(ingredientMap).length - found;
     setStatus(`✅ Данные для «${displayName}» сохранены.`);
@@ -256,7 +269,7 @@ window.lookupOne = async function(key) {
 };
 
 window.fixMissingUnitG = async function() {
-  const noUnitG = Object.keys(ingredientMap).filter(k => nutritionData[k] && !nutritionData[k].unitG);
+  const noUnitG = [...new Set(Object.keys(ingredientMap).map(canon))].filter(k => nutritionData[k] && !nutritionData[k].unitG);
   if (!noUnitG.length) { setStatus('✅ У всех ингредиентов уже есть unitG.'); return; }
 
   const btn = document.getElementById('fix-unitg-btn');
@@ -293,6 +306,67 @@ window.fixMissingUnitG = async function() {
   renderTable(Object.keys(ingredientMap));
   setStatus(`✅ unitG обновлён для ${processed} ингредиентов.`);
   btn.disabled = false;
+};
+
+// ── ОБОГАЩЕНИЕ СПРАВОЧНИКА ──
+// Категория, pantry-staple, скоропортящесть и хранение — нужны планировщику
+// и списку покупок (staples не попадают в список, скоропорт — ближе к закупке).
+const ENRICH_PROMPT = `Ты кулинарный справочник. Для каждого ингредиента из запроса верни ОДИН JSON-объект: ключ — название точно как в запросе, значение:
+- category: "vegetable|fruit|meat|poultry|fish|seafood|dairy|egg|grain|legume|nut|oil|spice|herb|sauce|sweet|other"
+- isPantryStaple: true если это базовый запас, который обычно есть дома и не нужно вносить в список покупок каждый раз (соль, сахар, мука, растительное масло, сушёные специи, крупы)
+- perishability: "days_2|days_5|weeks_2|months|non_perishable" — срок хранения после покупки
+- storage: "fridge|freezer|pantry" — где обычно хранится до готовки`;
+
+window.enrichDictionary = async function() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  if (!apiKey) { setStatus('⚠️ Введи OpenAI API key'); return; }
+  setOpenAIKey(apiKey);
+
+  const noCategory = Object.keys(nutritionData).filter(k => !nutritionData[k].category);
+  if (!noCategory.length) { setStatus('✅ Справочник уже обогащён.'); return; }
+
+  const btn = document.getElementById('enrich-btn');
+  btn.disabled = true;
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressFill = document.getElementById('progress-fill');
+  progressWrap.style.display = 'block'; progressFill.style.width = '0%';
+
+  const CATS = ['vegetable','fruit','meat','poultry','fish','seafood','dairy','egg','grain','legume','nut','oil','spice','herb','sauce','sweet','other'];
+  const PERISH = ['days_2','days_5','weeks_2','months','non_perishable'];
+  const STORAGE = ['fridge','freezer','pantry'];
+
+  const BATCH = 25;
+  let processed = 0;
+  for (let i = 0; i < noCategory.length; i += BATCH) {
+    const batch = noCategory.slice(i, i + BATCH);
+    setStatus(`Обогащаю: ${i + 1}–${Math.min(i + BATCH, noCategory.length)} из ${noCategory.length}…`);
+    try {
+      const result = await callJsonGPT(ENRICH_PROMPT,
+        'Верни JSON для всех этих ингредиентов: ' + batch.join(', '), apiKey);
+      for (const [name, vals] of Object.entries(result)) {
+        if (!vals) continue;
+        const normName = normalize(name);
+        const key = batch.find(k => k === normName) || normName;
+        if (!nutritionData[key]) continue;
+        const extra = {};
+        if (CATS.includes(vals.category)) extra.category = vals.category;
+        if (typeof vals.isPantryStaple === 'boolean') extra.isPantryStaple = vals.isPantryStaple;
+        if (PERISH.includes(vals.perishability)) extra.perishability = vals.perishability;
+        if (STORAGE.includes(vals.storage)) extra.storage = vals.storage;
+        if (!Object.keys(extra).length) continue;
+        nutritionData[key] = { ...nutritionData[key], ...extra };
+        await setDoc(doc(db, 'nutrition', key), nutritionData[key]);
+      }
+      processed += batch.length;
+      progressFill.style.width = `${(processed / noCategory.length) * 100}%`;
+    } catch (e) {
+      setStatus('❌ ' + e.message);
+      btn.disabled = false; return;
+    }
+  }
+  setStatus(`✅ Справочник обогащён: ${processed} записей.`);
+  btn.disabled = false;
+  btn.style.display = 'none';
 };
 
 function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
