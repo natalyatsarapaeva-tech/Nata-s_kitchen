@@ -235,10 +235,13 @@ export function pickWeighted(scored, rand = Math.random, topN = 5) {
 }
 
 // ── Подбор с честным ослаблением фильтров ──
-// Возвращает { recipe, relaxed } | null. relaxed: null|'repeat'|'time'.
-// Сытность (mood) — жёсткий фильтр и НИКОГДА не ослабляется автоматически:
-// исчерпали варианты — идём по второму кругу в той же сытности; совсем
-// пусто — null (UI показывает честный пустой экран с «Удиви меня»).
+// Возвращает { recipe, relaxed } | null.
+// relaxed: null|'repeat'|'time'|'mood_override'.
+// Сытность (mood) — жёсткий фильтр с одним исключением: если указаны
+// желаемые продукты и в выбранной сытности с ними пусто, продукты
+// побеждают — сытность снимается ('mood_override'), а UI передвигает
+// бегунок на категорию найденного блюда. Без продуктов сытность
+// не ослабляется никогда: пусто — честный пустой экран.
 
 export function pickSuggestion(recipes, opts, excludeIds = [], now = Date.now(), rand = Math.random) {
   const excluded = new Set(excludeIds);
@@ -254,9 +257,13 @@ export function pickSuggestion(recipes, opts, excludeIds = [], now = Date.now(),
     return { recipe: pickWeighted(scored, rand).recipe, relaxed };
   };
 
+  const wantSet = !!opts.want?.length;
   return tryPick(opts, null)
     || (excluded.size ? (excluded.clear(), tryPick(opts, 'repeat')) : null)
-    || (opts.maxMin ? tryPick({ ...opts, maxMin: null }, 'time') : null);
+    || (wantSet && opts.mood ? tryPick({ ...opts, mood: null }, 'mood_override') : null)
+    || (opts.maxMin ? tryPick({ ...opts, maxMin: null }, 'time') : null)
+    || (wantSet && opts.mood && opts.maxMin
+        ? tryPick({ ...opts, mood: null, maxMin: null }, 'mood_override') : null);
 }
 
 // Человеческая строка «почему это здесь».

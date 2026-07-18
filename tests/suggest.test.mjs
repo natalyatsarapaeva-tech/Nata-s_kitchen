@@ -339,3 +339,39 @@ test('pickSuggestion: больше совпавших продуктов — в�
   // продукты не найдены → null, никакой подмены
   assert.equal(pickSuggestion(rs, { want: ['утка', 'фуагра', 'трюфель'] }, [], NOW, () => 0), null);
 });
+
+test('продукты побеждают сытность: mood_override', () => {
+  const rs = [
+    { id: 'pork', title: 'Свинина запечённая', tags: ['meat'],
+      ingredients: [{ n: 'Свинина', a: '600 г' }] },       // всегда сытное
+    { id: 'salad', title: 'Овощной салат', tags: ['salad'],
+      ingredients: [{ n: 'Огурец', a: '2 шт' }] },          // лёгкое
+  ];
+  // «обычное» + свинина: в обычном свинины нет → продукты побеждают
+  const r = pickSuggestion(rs, { mood: 'normal', want: ['свинина'] }, [], NOW, () => 0);
+  assert.equal(r.recipe.id, 'pork');
+  assert.equal(r.relaxed, 'mood_override');
+  assert.equal(effectiveHeaviness(r.recipe), 'heavy'); // UI переключит бегунок на «сытное»
+
+  // совпадение есть в выбранной сытности → override не срабатывает
+  const ok = pickSuggestion(rs, { mood: 'light', want: ['огурец'] }, [], NOW, () => 0);
+  assert.equal(ok.recipe.id, 'salad');
+  assert.equal(ok.relaxed, null);
+
+  // БЕЗ продуктов сытность по-прежнему не ослабляется
+  assert.equal(pickSuggestion([rs[0]], { mood: 'normal' }, [], NOW, () => 0), null);
+
+  // продукты указаны, но их нет нигде → честный null, а не подмена
+  assert.equal(pickSuggestion(rs, { mood: 'normal', want: ['утка'] }, [], NOW, () => 0), null);
+});
+
+test('mood_override работает и вместе с лимитом времени', () => {
+  const rs = [
+    { id: 'pork-slow', title: 'Свинина томлёная', meta: '~180 мин', tags: ['meat'],
+      ingredients: [{ n: 'Свинина', a: '1 кг' }] },
+  ];
+  // обычное + до 20 мин + свинина: снимаются и сытность, и время
+  const r = pickSuggestion(rs, { mood: 'normal', maxMin: 20, want: ['свинина'] }, [], NOW, () => 0);
+  assert.equal(r.recipe.id, 'pork-slow');
+  assert.equal(r.relaxed, 'mood_override');
+});
