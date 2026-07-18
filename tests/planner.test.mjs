@@ -223,3 +223,45 @@ test('findReheatSlotId: завтрак → завтрак, ужин → обед
   assert.equal(findReheatSlotId({ planMeals: ['dinner'] }, 'mon_dinner'), 'tue_dinner');
   assert.equal(findReheatSlotId({ planMeals: ['dinner'] }, 'sun_dinner'), null);
 });
+
+// ── Канонизация списка покупок ──
+test('canonicalShoppingKey: модификаторы, «или», группы, alias', async () => {
+  const { canonicalShoppingKey } = await import('../js/planner.js');
+  assert.equal(canonicalShoppingKey('молоко тёплое', null), 'молоко');
+  assert.equal(canonicalShoppingKey('тёплое молоко', null), 'молоко');
+  assert.equal(canonicalShoppingKey('молоко или растительное молоко', null), 'молоко');
+  assert.equal(canonicalShoppingKey('яйца', null), 'яйцо');
+  assert.equal(canonicalShoppingKey('яйцо', null), 'яйцо');
+  assert.equal(canonicalShoppingKey('яиц', null), 'яйцо');
+  assert.equal(canonicalShoppingKey('яйца куриные', null), 'яйцо');
+  // кокосовое молоко — отдельный товар, не сливается с молоком
+  assert.equal(canonicalShoppingKey('кокосовое молоко', null), 'кокосовое молоко');
+  // alias справочника («томаты черри» → «помидор»)
+  const dict = buildDict({ 'помидор': { kcal: 20, protein: 1, fat: 0, carbs: 4, aliases: ['томаты черри'] } });
+  assert.equal(canonicalShoppingKey('томаты черри', dict), 'помидор');
+});
+
+test('aggregateShopping: синонимы сливаются, яйца считаются штуками', () => {
+  const recipes = {
+    a: { id: 'a', ingredients: [
+      { n: 'Яйца', a: '10 шт' },              // немигрировано: 600 г через unitG
+      { n: 'Молоко тёплое', a: '500 мл' },
+    ]},
+    b: { id: 'b', ingredients: [
+      { n: 'Яйцо', a: '150 г', qty: 150, unit: 'g', ing: 'яйцо' },
+      { n: 'молоко (или растительное молоко)', a: '100 мл' },
+      { n: 'Яйца', a: '2 шт', qty: 2, unit: 'pcs', ing: 'яйца' },
+    ]},
+  };
+  const slots = { mon_dinner: { recipeId: 'a' }, tue_dinner: { recipeId: 'b' } };
+  const items = aggregateShopping(slots, recipes, null);
+  // одна строка яиц, одна строка молока
+  const eggs = items.filter(i => i.key === 'яйцо');
+  assert.equal(eggs.length, 1, 'яйца слиты в одну позицию');
+  // 600г + 150г = 750г → 12.5 шт + 2 шт → потолок 15
+  assert.equal(shoppingAmountLabel(eggs[0]), '15 шт');
+  const milk = items.filter(i => i.key === 'молоко');
+  assert.equal(milk.length, 1, 'молоко слито в одну позицию');
+  assert.equal(Math.round(milk[0].grams), 600);
+  assert.ok(milk[0].label.toLowerCase().startsWith('молоко'), 'короткое написание как ярлык: ' + milk[0].label);
+});

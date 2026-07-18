@@ -1,7 +1,7 @@
 // Недельный планировщик: чистые функции (без Firebase) — тестируются в Node.
 // Заполнение сетки использует тот же скоринг, что и «Что приготовить?».
 import { pickSuggestion, isBatchDish } from './suggest.js';
-import { expandIngredients, dictLookup, entryKey, gramsForEntry, computeRecipeNutrition } from './nutrition-core.js';
+import { expandIngredients, dictLookup, entryKey, gramsForEntry, computeRecipeNutrition, DEFAULT_UNIT_G } from './nutrition-core.js';
 
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const DAY_LABELS = { mon: 'Пн', tue: 'Вт', wed: 'Ср', thu: 'Чт', fri: 'Пт', sat: 'Сб', sun: 'Вс' };
@@ -130,6 +130,28 @@ export function rerollSlot(recipes, profile, slots, slotId, dict = null, now = D
 // Структурированные qty/unit суммируются (шт отдельно, граммы отдельно);
 // неразобранное — списком исходных строк.
 
+// ── Канонизация ключа покупки ──
+// «Молоко тёплое», «молоко (или растительное молоко)» и «молоко» — один
+// товар; «яйца»/«яйцо»/«яиц» — один товар. Порядок: alias справочника →
+// отрезать « или …» → убрать модификаторы → alias ещё раз → встроенные группы.
+
+const SHOPPING_MODIFIERS = /^(тёплое|теплое|тёплый|теплый|тёплая|теплая|холодное|холодный|холодная|ледяная|ледяной|горячее|горячая|свежий|свежая|свежее|свежие|спелый|спелая|спелое|спелые|крупный|крупная|крупное|крупные|мелкий|мелкая|мелкие|небольшой|небольшая|небольшие|маленький|маленькая|маленькие|большой|большая|большие|сырой|сырая|сырые|молодой|молодая|молодые|средний|средняя|средние)$/;
+const SHOPPING_GROUPS = [
+  [/^яйц|^яиц/, 'яйцо'],
+];
+
+export function canonicalShoppingKey(key, dict) {
+  let k = dict?.alias?.[key] || key;
+  k = k.split(' или ')[0].trim();
+  const words = k.split(/\s+/).filter(w => !SHOPPING_MODIFIERS.test(w));
+  if (words.length) k = words.join(' ');
+  k = dict?.alias?.[k] || k;
+  for (const [re, canon] of SHOPPING_GROUPS) {
+    if (re.test(k.split(' ')[0])) return canon;
+  }
+  return k;
+}
+
 export function aggregateShopping(slots, recipesById, dict, profile = null) {
   const items = new Map();
   for (const slot of Object.values(slots || {})) {
@@ -139,14 +161,20 @@ export function aggregateShopping(slots, recipesById, dict, profile = null) {
     const factor = slot.kind === 'batch' ? batchFactor(r, profile) : 1;
     for (const i of expandIngredients(r.ingredients)) {
       if (!i.n) continue;
-      const key = entryKey(i);
-      const d = dictLookup(dict, key);
+      const rawKey = entryKey(i);
+      const key = canonicalShoppingKey(rawKey, dict);
+      const d = dictLookup(dict, key) || dictLookup(dict, rawKey);
       if (d?.isPantryStaple) continue;
+      // штучный продукт (яйца, овощи с весом штуки) — покупается штуками
+      const unitG = d?.unitG || DEFAULT_UNIT_G[key] || DEFAULT_UNIT_G[rawKey] || null;
       let item = items.get(key);
       if (!item) {
-        item = { key, label: i.n, category: d?.category || 'other', pcs: 0, grams: 0, lines: [] };
+        item = { key, label: i.n, category: d?.category || 'other', pcs: 0, grams: 0, lines: [], unitG };
         items.set(key, item);
       }
+      if (!item.unitG && unitG) item.unitG = unitG;
+      // самое короткое написание — обычно самое каноничное («молоко», не «Молоко тёплое»)
+      if (i.n.length < item.label.length) item.label = i.n;
       if (i.qty != null && i.unit === 'pcs') item.pcs += i.qty * factor;
       else {
         const g = gramsForEntry(i, d);
@@ -161,10 +189,15 @@ export function aggregateShopping(slots, recipesById, dict, profile = null) {
 
 export function shoppingAmountLabel(item) {
   const parts = [];
-  if (item.pcs) parts.push(`${Math.round(item.pcs * 10) / 10} шт`);
-  if (item.grams) parts.push(item.grams >= 1000
-    ? `${Math.round(item.grams / 100) / 10} кг`
-    : `${Math.round(item.grams)} г`);
+  if (item.unitG && (item.pcs || item.grams)) {
+    // штучный товар: граммы переводим в штуки, округляем вверх до целой
+    parts.push(`${Math.ceil(item.pcs + item.grams / item.unitG)} шт`);
+  } else {
+    if (item.pcs) parts.push(`${Math.round(item.pcs * 10) / 10} шт`);
+    if (item.grams) parts.push(item.grams >= 1000
+      ? `${Math.round(item.grams / 100) / 10} кг`
+      : `${Math.round(item.grams)} г`);
+  }
   for (const l of item.lines) parts.push(l);
   return parts.join(' + ') || '';
 }
