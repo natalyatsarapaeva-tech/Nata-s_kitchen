@@ -148,6 +148,14 @@ export function effectiveHeaviness(r, dict = null) {
   return 'medium';
 }
 
+// Класс белка для недельных квот: мясо / рыба / вегетарианское.
+export function proteinClass(r) {
+  const s = recipeSignals(r);
+  if (s.hasAnyMeat) return 'meat';
+  if (s.hasFish) return 'fish';
+  return 'veg';
+}
+
 // ── Батч-блюда: «готовим один раз — едим три раза» ──
 // Ужин сегодня + обед/ужин завтра + 1 порция в заморозку. Список форматов
 // задан пользователем; детекция по названию блюда + сигналам ингредиентов.
@@ -234,6 +242,7 @@ export function filterCandidates(recipes, opts) {
     if (opts.mood) {
       if (effectiveHeaviness(r, opts.dict || null) !== MOOD_TO_HEAVINESS[opts.mood]) return false;
     }
+    if (opts.protein && proteinClass(r) !== opts.protein) return false;
     if (opts.want?.length) {
       if (matchWantedIngredients(r, opts.want).length < wantedThreshold(opts.want.length)) return false;
     }

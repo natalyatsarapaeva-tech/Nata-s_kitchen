@@ -265,3 +265,95 @@ test('aggregateShopping: синонимы сливаются, яйца счит�
   assert.equal(Math.round(milk[0].grams), 600);
   assert.ok(milk[0].label.toLowerCase().startsWith('молоко'), 'короткое написание как ярлык: ' + milk[0].label);
 });
+
+// ── Квоты ужинов и чередование сытности ──
+test('proteinClass: мясо / рыба / вегетарианское', async () => {
+  const { proteinClass } = await import('../js/suggest.js');
+  assert.equal(proteinClass({ ingredients: [{ n: 'Говядина', a: '500 г' }] }), 'meat');
+  assert.equal(proteinClass({ ingredients: [{ n: 'Куриная грудка', a: '400 г' }] }), 'meat');
+  assert.equal(proteinClass({ ingredients: [{ n: 'Лосось', a: '300 г' }] }), 'fish');
+  assert.equal(proteinClass({ tags: ['veggie'], ingredients: [{ n: 'Кабачок', a: '1 шт' }] }), 'veg');
+});
+
+const QUOTA_CATALOG = [
+  // мясные: средний (борщ) и сытные (гуляш, жаркое)
+  { id: 'borsch', title: 'Борщ', tags: ['soup'], meta: '~60 мин',
+    ingredients: [{ n: 'Говядина', a: '400 г' }, { n: 'Свёкла', a: '2 шт' }] },
+  { id: 'gulyash', title: 'Гуляш', tags: ['meat'], meta: '~90 мин',
+    ingredients: [{ n: 'Говядина', a: '500 г' }] },
+  { id: 'roast', title: 'Жаркое', tags: ['meat'], meta: '~80 мин',
+    ingredients: [{ n: 'Свинина', a: '600 г' }] },
+  // рыба
+  { id: 'salmon', title: 'Лосось запечённый', tags: ['fish'], meta: '~25 мин',
+    ingredients: [{ n: 'Лосось', a: '600 г' }] },
+  { id: 'cod', title: 'Треска с овощами', tags: ['fish'], meta: '~30 мин',
+    ingredients: [{ n: 'Треска', a: '500 г' }] },
+  // вег
+  { id: 'veg1', title: 'Овощная сковорода', tags: ['veggie'], meta: '~25 мин',
+    ingredients: [{ n: 'Кабачок', a: '2 шт' }] },
+  { id: 'veg2', title: 'Тушёная капуста', tags: ['veggie'], meta: '~35 мин',
+    ingredients: [{ n: 'Капуста', a: '1 шт' }] },
+  { id: 'veg3', title: 'Печёные овощи', tags: ['veggie'], meta: '~40 мин',
+    ingredients: [{ n: 'Баклажан', a: '2 шт' }] },
+];
+
+test('generateWeek: квоты ужинов соблюдаются (разогрев батча тоже расходует квоту)', async () => {
+  const { proteinClass } = await import('../js/suggest.js');
+  const profile = { planMeals: ['dinner'], rhythm: {},
+    dinnerQuota: { meat: 3, fish: 2, veg: 2 } };
+  const slots = generateWeek(QUOTA_CATALOG, profile, {}, null, NOW, () => 0);
+  const byId = {}; QUOTA_CATALOG.forEach(r => byId[r.id] = r);
+  const entries = DAYS.map(d => slots[`${d}_dinner`]);
+  const classes = entries.map(s => proteinClass(byId[s.recipeId] || {}));
+  const count = c => classes.filter(x => x === c).length;
+  assert.equal(count('meat'), 3, 'мясных ужинов (включая разогрев) ровно 3: ' + classes.join(','));
+  assert.equal(count('fish'), 2, 'рыбных 2');
+  assert.equal(count('veg'), 2, 'вегетарианских 2');
+  // классы не повторяются подряд — кроме разогрева батча (это то же блюдо)
+  for (let i = 1; i < classes.length; i++) {
+    if (entries[i].kind === 'reheat') continue;
+    assert.notEqual(classes[i], classes[i - 1], `подряд одинаковые: ${classes.join(',')}`);
+  }
+});
+
+test('generateWeek: свежие мясные ужины чередуются средний → сытный', async () => {
+  const { effectiveHeaviness } = await import('../js/suggest.js');
+  const profile = { planMeals: ['dinner'], rhythm: {},
+    dinnerQuota: { meat: 3, fish: 2, veg: 2 } };
+  const slots = generateWeek(QUOTA_CATALOG, profile, {}, null, NOW, () => 0);
+  const byId = {}; QUOTA_CATALOG.forEach(r => byId[r.id] = r);
+  // только слоты готовки (не разогревы), только мясные
+  const meatHeavies = DAYS
+    .map(d => slots[`${d}_dinner`])
+    .filter(s => s.kind !== 'reheat' && ['borsch', 'gulyash', 'roast'].includes(s.recipeId))
+    .map(s => effectiveHeaviness(byId[s.recipeId]));
+  assert.ok(meatHeavies.length >= 2, 'есть минимум два свежих мясных ужина');
+  assert.equal(meatHeavies[0], 'medium', 'первый мясной ужин средний: ' + meatHeavies.join(','));
+  assert.equal(meatHeavies[1], 'heavy', 'второй мясной — сытный');
+});
+
+test('generateWeek: залоченный мясной ужин расходует квоту', async () => {
+  const { proteinClass } = await import('../js/suggest.js');
+  const profile = { planMeals: ['dinner'], rhythm: {},
+    dinnerQuota: { meat: 1, fish: 0, veg: 6 } };
+  const existing = { wed_dinner: { recipeId: 'gulyash', locked: true } };
+  const slots = generateWeek(QUOTA_CATALOG, profile, existing, null, NOW, () => 0);
+  const byId = {}; QUOTA_CATALOG.forEach(r => byId[r.id] = r);
+  const meatCount = DAYS.filter(d =>
+    proteinClass(byId[slots[`${d}_dinner`].recipeId] || {}) === 'meat').length;
+  assert.equal(meatCount, 1, 'единственный мясной — залоченный гуляш');
+});
+
+test('generateWeek: квота на класс без кандидатов честно откатывается', () => {
+  const noFish = QUOTA_CATALOG.filter(r => !['salmon', 'cod'].includes(r.id));
+  const profile = { planMeals: ['dinner'], rhythm: {}, dinnerQuota: { meat: 2, fish: 3, veg: 2 } };
+  const slots = generateWeek(noFish, profile, {}, null, NOW, () => 0);
+  assert.ok(Object.values(slots).every(s => s.recipeId), 'слоты заполнены несмотря на невыполнимую рыбную квоту');
+});
+
+test('rerollSlot: сохраняет класс белка текущего блюда', () => {
+  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const slots = { mon_dinner: { recipeId: 'salmon' } };
+  const next = rerollSlot(QUOTA_CATALOG, profile, slots, 'mon_dinner', null, NOW, () => 0);
+  assert.equal(next.recipeId, 'cod', 'рыбный ужин остаётся рыбным');
+});
