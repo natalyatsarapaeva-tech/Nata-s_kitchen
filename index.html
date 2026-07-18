@@ -304,7 +304,7 @@
       <button class="tab" data-v="" onclick="setIdeaOpt('maxMin',null,this)">неважно</button>
     </div>
     <div class="section-label">Сытность</div>
-    <div class="mood-runner" id="mood-runner">
+    <div class="mood-runner set" id="mood-runner">
       <div class="mood-thumb" id="mood-thumb"></div>
       <button class="mood-stop" data-v="light" onclick="setMood('light')" type="button">🥗 полегче</button>
       <button class="mood-stop" data-v="normal" onclick="setMood('normal')" type="button">🍽 обычное</button>
@@ -677,7 +677,7 @@ window.markCookedCurrent = async function() {
 }
 
 // ── ЧТО ПРИГОТОВИТЬ ──
-let ideaOpts = { meal: 'dinner', maxMin: null, mood: null };
+let ideaOpts = { meal: 'dinner', maxMin: null, mood: 'normal' };
 let ideaShown = [];       // id, показанные в этой сессии подбора
 let currentSurprise = null;
 let surpriseTitles = [];  // чтобы «Ещё вариант» не повторял предложения
@@ -685,7 +685,7 @@ let surpriseTitles = [];  // чтобы «Ещё вариант» не повт�
 window.openIdea = function() {
   ideaShown = [];
   currentSurprise = null;
-  ideaOpts = { meal: mealTypeFromClock(new Date().getHours()), maxMin: null, mood: null };
+  ideaOpts = { meal: mealTypeFromClock(new Date().getHours()), maxMin: null, mood: 'normal' };
   syncIdeaChips();
   show('idea-screen');
   window.scrollTo(0, 0);
@@ -701,23 +701,21 @@ function syncIdeaChips() {
 }
 
 const MOOD_CAPTIONS = {
-  light: 'только лёгкое: овощи, молочное, рыба и морепродукты · повторный тап — сброс',
-  normal: 'блюда обычной сытности · повторный тап — сброс',
-  hearty: 'сытные, плотные блюда · повторный тап — сброс',
+  light: 'только лёгкое: овощи, молочное, рыба и морепродукты',
+  normal: 'блюда обычной сытности',
+  hearty: 'сытные, плотные блюда',
 };
 
 function syncMoodRunner() {
   const order = ['light', 'normal', 'hearty'];
-  const idx = order.indexOf(ideaOpts.mood);
-  document.getElementById('mood-runner').classList.toggle('set', idx >= 0);
+  const idx = Math.max(order.indexOf(ideaOpts.mood), 0);
   document.querySelectorAll('.mood-stop').forEach((b, i) => b.classList.toggle('on', i === idx));
-  if (idx >= 0) document.getElementById('mood-thumb').style.transform = `translateX(${idx * 100}%)`;
-  document.getElementById('mood-caption').textContent =
-    idx >= 0 ? MOOD_CAPTIONS[ideaOpts.mood] : 'неважно — нажми, чтобы выбрать';
+  document.getElementById('mood-thumb').style.transform = `translateX(${idx * 100}%)`;
+  document.getElementById('mood-caption').textContent = MOOD_CAPTIONS[order[idx]];
 }
 
 window.setMood = function(val) {
-  ideaOpts.mood = ideaOpts.mood === val ? null : val; // повторный тап — сброс
+  ideaOpts.mood = val;
   ideaShown = [];
   syncMoodRunner();
   rollIdea();
