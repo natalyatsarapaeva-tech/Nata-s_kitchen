@@ -139,6 +139,50 @@ export function effectiveHeaviness(r, dict = null) {
 // opts: { meal: 'breakfast'|'lunch'|'dinner', maxMin: number|null,
 //         mood: 'light'|'normal'|'hearty'|null, dict?: справочник для ккал }
 
+// ── Желаемые ингредиенты («готовим из того, что есть») ──
+// Пользователь вводит продукты через запятую; рецепт проходит, если содержит
+// хотя бы один из 1–2 указанных, либо хотя бы два из 3+ указанных.
+
+export function parseWantedIngredients(text) {
+  return String(text || '').split(/[,;\n]+/)
+    .map(s => normalizeIngName(s))
+    .filter(s => s.length > 1);
+}
+
+export function wantedThreshold(n) {
+  return n >= 3 ? 2 : (n >= 1 ? 1 : 0);
+}
+
+// Морфологичное сравнение слов: точное совпадение или общий префикс
+// длиной >= max(4, короткое-2) — «кабачки»↔«кабачок», «помидор»↔«помидоры».
+function wordsMatch(a, b) {
+  if (a === b) return true;
+  const minLen = Math.min(a.length, b.length);
+  const need = Math.max(4, minLen - 2);
+  let i = 0;
+  while (i < minLen && a[i] === b[i]) i++;
+  return i >= need;
+}
+
+// Фраза («куриная грудка») совпадает со строкой рецепта, только если
+// КАЖДОЕ её значимое слово находит пару — «куриные крылья» не пройдут.
+function phraseMatchesEntry(phraseWords, entryWords) {
+  return phraseWords.every(w => entryWords.some(ew => wordsMatch(w, ew)));
+}
+
+// Возвращает список желаемых продуктов, найденных в рецепте.
+export function matchWantedIngredients(recipe, wanted) {
+  if (!wanted?.length) return [];
+  const entries = expandIngredients(recipe.ingredients)
+    .filter(i => i.n)
+    .map(i => (normalizeIngName(i.n) + ' ' + (i.ing || '')).trim().split(/\s+/));
+  return wanted.filter(w => {
+    const pw = w.split(' ').filter(x => x.length > 2);
+    if (!pw.length) return false;
+    return entries.some(ew => phraseMatchesEntry(pw, ew));
+  });
+}
+
 const MOOD_TO_HEAVINESS = { light: 'light', normal: 'medium', hearty: 'heavy' };
 const EXCLUDED_TAGS = ['dessert', 'icecream']; // никогда не в выдаче «что приготовить»
 
@@ -152,6 +196,9 @@ export function filterCandidates(recipes, opts) {
     }
     if (opts.mood) {
       if (effectiveHeaviness(r, opts.dict || null) !== MOOD_TO_HEAVINESS[opts.mood]) return false;
+    }
+    if (opts.want?.length) {
+      if (matchWantedIngredients(r, opts.want).length < wantedThreshold(opts.want.length)) return false;
     }
     return true;
   });
@@ -198,8 +245,12 @@ export function pickSuggestion(recipes, opts, excludeIds = [], now = Date.now(),
   const tryPick = (o, relaxed) => {
     const cands = filterCandidates(recipes, o).filter(r => !excluded.has(r.id));
     if (!cands.length) return null;
-    const scored = cands.map(r => ({ recipe: r, score: scoreRecipe(r, now) }))
-      .sort((a, b) => b.score - a.score);
+    const scored = cands.map(r => ({
+      recipe: r,
+      // больше совпавших желаемых продуктов → заметно выше в выдаче
+      score: scoreRecipe(r, now)
+        + (o.want?.length ? matchWantedIngredients(r, o.want).length * 30 : 0),
+    })).sort((a, b) => b.score - a.score);
     return { recipe: pickWeighted(scored, rand).recipe, relaxed };
   };
 

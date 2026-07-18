@@ -277,3 +277,65 @@ test('similarInCatalog + catalogDigest', () => {
   ]);
   assert.equal(digest, 'Суп · chicken · русская\nТорт');
 });
+
+test('parseWantedIngredients + wantedThreshold', async () => {
+  const { parseWantedIngredients, wantedThreshold } = await import('../js/suggest.js');
+  assert.deepEqual(parseWantedIngredients('Кабачки, куриная грудка, помидор, тхина'),
+    ['кабачки', 'куриная грудка', 'помидор', 'тхина']);
+  assert.deepEqual(parseWantedIngredients('лосось;  спаржа\nсливки'), ['лосось', 'спаржа', 'сливки']);
+  assert.deepEqual(parseWantedIngredients('  ,, я ,'), []);
+  assert.equal(wantedThreshold(0), 0);
+  assert.equal(wantedThreshold(1), 1);
+  assert.equal(wantedThreshold(2), 1);
+  assert.equal(wantedThreshold(3), 2);
+  assert.equal(wantedThreshold(5), 2);
+});
+
+test('matchWantedIngredients: морфология и фразы', async () => {
+  const { matchWantedIngredients } = await import('../js/suggest.js');
+  const recipe = { ingredients: [
+    { n: 'Кабачок', a: '1 шт' },
+    { n: 'Куриная грудка', a: '400 г' },
+    { n: 'Помидоры черри', a: '200 г' },
+    { n: 'Соль', a: 'щепотка' },
+  ]};
+  // «кабачки» находит «кабачок», «помидор» — «помидоры черри»
+  assert.deepEqual(matchWantedIngredients(recipe, ['кабачки', 'помидор', 'тхина']),
+    ['кабачки', 'помидор']);
+  // фраза целиком: «куриная грудка» совпадает…
+  assert.deepEqual(matchWantedIngredients(recipe, ['куриная грудка']), ['куриная грудка']);
+  // …а с крыльями — нет
+  const wings = { ingredients: [{ n: 'Куриные крылья', a: '1 кг' }] };
+  assert.deepEqual(matchWantedIngredients(wings, ['куриная грудка']), []);
+  // канонический ключ ing тоже участвует в поиске
+  const canon = { ingredients: [{ n: 'Цукини мелкие', a: '2 шт', ing: 'кабачок' }] };
+  assert.deepEqual(matchWantedIngredients(canon, ['кабачки']), ['кабачки']);
+  assert.deepEqual(matchWantedIngredients(recipe, []), []);
+});
+
+test('filterCandidates: порог совпадений 1 из 1–2, 2 из 3+', () => {
+  const rs = [
+    { id: 'a', title: 'А', tags: ['veggie'], ingredients: [{ n: 'Кабачок', a: '1 шт' }] },
+    { id: 'b', title: 'Б', tags: ['veggie'], ingredients: [{ n: 'Кабачок', a: '1 шт' }, { n: 'Помидор', a: '2 шт' }] },
+    { id: 'c', title: 'В', tags: ['veggie'], ingredients: [{ n: 'Морковь', a: '2 шт' }] },
+  ];
+  // 2 продукта → достаточно одного совпадения: a и b проходят
+  const one = filterCandidates(rs, { want: ['кабачки', 'тхина'] });
+  assert.deepEqual(one.map(r => r.id), ['a', 'b']);
+  // 3 продукта → нужно два совпадения: только b
+  const two = filterCandidates(rs, { want: ['кабачки', 'помидор', 'тхина'] });
+  assert.deepEqual(two.map(r => r.id), ['b']);
+  // ни одного совпадения → пусто
+  assert.deepEqual(filterCandidates(rs, { want: ['утка'] }), []);
+});
+
+test('pickSuggestion: больше совпавших продуктов — выше в выдаче, фильтр не ослабляется', () => {
+  const rs = [
+    { id: 'one-match', title: 'Одно', tags: ['veggie'], ingredients: [{ n: 'Кабачок', a: '1 шт' }] },
+    { id: 'two-match', title: 'Два', tags: ['veggie'], ingredients: [{ n: 'Кабачок', a: '1 шт' }, { n: 'Помидор', a: '2 шт' }] },
+  ];
+  const r = pickSuggestion(rs, { want: ['кабачки', 'помидор'] }, [], NOW, () => 0);
+  assert.equal(r.recipe.id, 'two-match'); // бонус за второе совпадение перевешивает
+  // продукты не найдены → null, никакой подмены
+  assert.equal(pickSuggestion(rs, { want: ['утка', 'фуагра', 'трюфель'] }, [], NOW, () => 0), null);
+});
