@@ -49,41 +49,88 @@ export function recipeMinutes(r) {
 
 // ── Сытность ──
 // Строгая детерминированная классификация: light | medium | heavy.
-// «Лёгкое» — только овощи/молочное/рыба/морепродукты с небольшим жиром
-// и без десертного сахара; мясные блюда (гуляш, фрикадельки, жаркое)
-// никогда не попадают в light, даже без разметки. Метка GPT
-// (attrs.heaviness) уточняет, но не может нарушить эти правила.
+// Каскад правил (специфичное раньше общего):
+//   1. Энергия на порцию: >550 ккал или >25 г жира → сытное.
+//   2. Супы: без мяса → лёгкие; с мясом → средние; с мясом и бобовыми
+//      (фасоль/чечевица/нут/горох) → сытные.
+//   3. Салаты: без мяса → лёгкие; с любым мясом → средние.
+//   4. Свинина, бекон, колбаски, говядина, куриные/утиные/индюшачьи
+//      ноги и бёдра → сытное. Любая паста → сытное.
+//   5. Рыба/морепродукты и куриная/индюшачья грудка → среднее.
+//   6. Овощное/молочное с небольшой энергией → лёгкое; остальное — среднее.
+// Детекция по названиям ингредиентов — работает и для немигрированных.
 
-const RED_MEAT = ['beef', 'pork', 'lamb'];
-const LIGHT_PROTEINS = ['fish', 'seafood', 'dairy', 'legumes', 'none'];
-const SWEET_TAGS = ['dessert', 'baking', 'icecream'];
+// ВАЖНО: \b в JS не работает с кириллицей — используем (^|\s)…(\s|$).
+const RE_HEAVY_MEAT = /свин|бекон|колбас|сосис|говя|стейк|панчетт|ветчин|баран|ягн|фарш/;
+const RE_POULTRY = /курин|куриц|цыпл|индюш|индейк|утин|утк|гус/;
+const RE_POULTRY_DARK = /бедр|бёдр|ножк|(^|\s)ног[иа]?(\s|$)|голен|окорочк/;
+const RE_MEAT_OTHER = /мясн|(^|\s)мяс[оа]?(\s|$)|кролик|телят/;
+const RE_FISH = /рыб|лосос|семг|сёмг|форел|треск|тунец|тунц|скумбр|сельд|дорад|сибас|судак|минтай|палтус|камбал|анчоус|кревет|мидии|мидий|кальмар|осьминог|гребешк|(^|\s)краб|лангуст|устриц/;
+const RE_BREAST = /грудк/;
+const RE_LEGUMES = /фасол|чечевиц|(^|\s)нут[а]?(\s|$)|(^|\s)горох|бобы|бобов/;
+const RE_PASTA = /макарон|спагетт|лингвин|фузилл|пенне|фарфалл|тальятел|феттуч|лазань|паппардел|вермишел|ньокк|(^|\s)орзо(\s|$)|лапш|букатин|ригатон|равиол|тортеллин|каннеллон/;
 
 export function effectiveHeaviness(r, dict = null) {
   const label = r.attrs?.heaviness || null;
   const tags = r.tags || [];
+  const protein = r.attrs?.mainProtein || null;
 
-  // Белковый класс: из attrs, иначе грубо из категорий
-  let p = r.attrs?.mainProtein || null;
-  if (!p) {
-    if (tags.includes('meat')) p = 'beef';
-    else if (tags.includes('chicken')) p = 'chicken';
-    else if (tags.includes('fish')) p = 'fish';
-    else if (tags.includes('salad') || tags.includes('veggie')) p = 'none';
-  }
+  // Названия ингредиентов: исходный текст + канонический ключ
+  const ings = expandIngredients(r.ingredients)
+    .filter(i => i.n)
+    .map(i => (normalizeIngName(i.n) + ' ' + (i.ing || '')).trim());
+  const anyIng = re => ings.some(s => re.test(s));
+
+  const hasHeavyMeat = anyIng(RE_HEAVY_MEAT)
+    || ings.some(s => RE_POULTRY.test(s) && RE_POULTRY_DARK.test(s))
+    || ['pork', 'beef', 'lamb'].includes(protein);
+  const hasAnyMeat = hasHeavyMeat
+    || anyIng(RE_POULTRY) || anyIng(RE_MEAT_OTHER)
+    || ['chicken'].includes(protein)
+    || tags.includes('meat') || tags.includes('chicken');
+  const hasFish = anyIng(RE_FISH) || tags.includes('fish')
+    || ['fish', 'seafood'].includes(protein);
+  const hasBreast = anyIng(RE_BREAST);
+  const hasLegumes = anyIng(RE_LEGUMES);
+  const hasPasta = anyIng(RE_PASTA) || tags.includes('pasta');
 
   const perServing = dict ? computeRecipeNutrition(r, dict).perServing : null;
   const kcal = perServing?.kcal ?? null;
   const fat = perServing?.fat ?? null;
+  // «лёгкое» дополнительно требует небольшой энергии, когда данные есть
+  const lowEnergy = (kcal == null || kcal <= 400) && (fat == null || fat <= 20);
 
-  if (label === 'heavy') return 'heavy';
+  // 1. Данные о калориях сильнее любых эвристик
   if (kcal != null && kcal > 550) return 'heavy';
   if (fat != null && fat > 25) return 'heavy';
 
-  const sweet = SWEET_TAGS.some(t => tags.includes(t));
-  const lightEligible = p != null && LIGHT_PROTEINS.includes(p) && !sweet;
-  // жир до 20 г/порцию: «немного жира», но жирная рыба (лосось) не выпадает
-  const lowEnergy = (kcal == null || kcal <= 400) && (fat == null || fat <= 20);
-  if (lightEligible && lowEnergy && label !== 'medium') return 'light';
+  // 2. Супы — явные правила пользователя
+  if (tags.includes('soup')) {
+    if (hasAnyMeat && hasLegumes) return 'heavy';
+    if (hasAnyMeat) return 'medium';
+    return lowEnergy ? 'light' : 'medium';
+  }
+
+  // 3. Салаты
+  if (tags.includes('salad')) {
+    if (hasAnyMeat) return 'medium';
+    return lowEnergy ? 'light' : 'medium';
+  }
+
+  // 4. Тяжёлое мясо и паста
+  if (hasHeavyMeat) return 'heavy';
+  if (hasPasta) return 'heavy';
+
+  // Метка GPT может только утяжелить (сырный пирог и т.п.), не облегчить
+  if (label === 'heavy') return 'heavy';
+
+  // 5. Рыба/морепродукты и грудка птицы
+  if (hasFish || hasBreast) return 'medium';
+  if (hasAnyMeat) return 'medium';
+
+  // 6. Овощное/молочное — лёгкое при небольшой энергии; выпечка — нет
+  const veggieish = tags.includes('veggie') || ['none', 'dairy', 'legumes'].includes(protein);
+  if (veggieish && !tags.includes('baking') && lowEnergy && label !== 'medium') return 'light';
 
   return 'medium';
 }
@@ -93,9 +140,11 @@ export function effectiveHeaviness(r, dict = null) {
 //         mood: 'light'|'normal'|'hearty'|null, dict?: справочник для ккал }
 
 const MOOD_TO_HEAVINESS = { light: 'light', normal: 'medium', hearty: 'heavy' };
+const EXCLUDED_TAGS = ['dessert', 'icecream']; // никогда не в выдаче «что приготовить»
 
 export function filterCandidates(recipes, opts) {
   return (recipes || []).filter(r => {
+    if ((r.tags || []).some(t => EXCLUDED_TAGS.includes(t))) return false;
     if (opts.meal && !mealTypesForRecipe(r).includes(opts.meal)) return false;
     if (opts.maxMin) {
       const min = recipeMinutes(r);
