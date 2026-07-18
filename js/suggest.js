@@ -1,7 +1,7 @@
 // «Что приготовить?» — чистая логика подбора: фильтры, скоринг, взвешенный
 // случайный выбор, проверка похожести для «Удиви меня». Без Firebase — тестируется в Node.
 import { normalizeIngName } from './utils.js';
-import { expandIngredients } from './nutrition-core.js';
+import { expandIngredients, computeRecipeNutrition } from './nutrition-core.js';
 
 // ── Приём пищи ──
 
@@ -47,8 +47,52 @@ export function recipeMinutes(r) {
   return null;
 }
 
+// ── Сытность ──
+// Строгая детерминированная классификация: light | medium | heavy.
+// «Лёгкое» — только овощи/молочное/рыба/морепродукты с небольшим жиром
+// и без десертного сахара; мясные блюда (гуляш, фрикадельки, жаркое)
+// никогда не попадают в light, даже без разметки. Метка GPT
+// (attrs.heaviness) уточняет, но не может нарушить эти правила.
+
+const RED_MEAT = ['beef', 'pork', 'lamb'];
+const LIGHT_PROTEINS = ['fish', 'seafood', 'dairy', 'legumes', 'none'];
+const SWEET_TAGS = ['dessert', 'baking', 'icecream'];
+
+export function effectiveHeaviness(r, dict = null) {
+  const label = r.attrs?.heaviness || null;
+  const tags = r.tags || [];
+
+  // Белковый класс: из attrs, иначе грубо из категорий
+  let p = r.attrs?.mainProtein || null;
+  if (!p) {
+    if (tags.includes('meat')) p = 'beef';
+    else if (tags.includes('chicken')) p = 'chicken';
+    else if (tags.includes('fish')) p = 'fish';
+    else if (tags.includes('salad') || tags.includes('veggie')) p = 'none';
+  }
+
+  const perServing = dict ? computeRecipeNutrition(r, dict).perServing : null;
+  const kcal = perServing?.kcal ?? null;
+  const fat = perServing?.fat ?? null;
+
+  if (label === 'heavy') return 'heavy';
+  if (kcal != null && kcal > 550) return 'heavy';
+  if (fat != null && fat > 25) return 'heavy';
+
+  const sweet = SWEET_TAGS.some(t => tags.includes(t));
+  const lightEligible = p != null && LIGHT_PROTEINS.includes(p) && !sweet;
+  // жир до 20 г/порцию: «немного жира», но жирная рыба (лосось) не выпадает
+  const lowEnergy = (kcal == null || kcal <= 400) && (fat == null || fat <= 20);
+  if (lightEligible && lowEnergy && label !== 'medium') return 'light';
+
+  return 'medium';
+}
+
 // ── Фильтры ──
-// opts: { meal: 'breakfast'|'lunch'|'dinner', maxMin: number|null, mood: 'light'|'hearty'|null }
+// opts: { meal: 'breakfast'|'lunch'|'dinner', maxMin: number|null,
+//         mood: 'light'|'normal'|'hearty'|null, dict?: справочник для ккал }
+
+const MOOD_TO_HEAVINESS = { light: 'light', normal: 'medium', hearty: 'heavy' };
 
 export function filterCandidates(recipes, opts) {
   return (recipes || []).filter(r => {
@@ -58,9 +102,7 @@ export function filterCandidates(recipes, opts) {
       if (min == null || min > opts.maxMin) return false;
     }
     if (opts.mood) {
-      const h = r.attrs?.heaviness;
-      if (opts.mood === 'light' && h === 'heavy') return false;
-      if (opts.mood === 'hearty' && h === 'light') return false;
+      if (effectiveHeaviness(r, opts.dict || null) !== MOOD_TO_HEAVINESS[opts.mood]) return false;
     }
     return true;
   });
@@ -97,7 +139,10 @@ export function pickWeighted(scored, rand = Math.random, topN = 5) {
 }
 
 // ── Подбор с честным ослаблением фильтров ──
-// Возвращает { recipe, relaxed } | null. relaxed: null|'mood'|'time'|'repeat'.
+// Возвращает { recipe, relaxed } | null. relaxed: null|'repeat'|'time'.
+// Сытность (mood) — жёсткий фильтр и НИКОГДА не ослабляется автоматически:
+// исчерпали варианты — идём по второму кругу в той же сытности; совсем
+// пусто — null (UI показывает честный пустой экран с «Удиви меня»).
 
 export function pickSuggestion(recipes, opts, excludeIds = [], now = Date.now(), rand = Math.random) {
   const excluded = new Set(excludeIds);
@@ -110,9 +155,8 @@ export function pickSuggestion(recipes, opts, excludeIds = [], now = Date.now(),
   };
 
   return tryPick(opts, null)
-    || (opts.mood ? tryPick({ ...opts, mood: null }, 'mood') : null)
-    || (opts.maxMin ? tryPick({ ...opts, mood: null, maxMin: null }, 'time') : null)
-    || (excluded.size ? (excluded.clear(), tryPick({ ...opts, mood: null, maxMin: null }, 'repeat')) : null);
+    || (excluded.size ? (excluded.clear(), tryPick(opts, 'repeat')) : null)
+    || (opts.maxMin ? tryPick({ ...opts, maxMin: null }, 'time') : null);
 }
 
 // Человеческая строка «почему это здесь».
