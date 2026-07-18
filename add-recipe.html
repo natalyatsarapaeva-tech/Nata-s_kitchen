@@ -185,6 +185,8 @@
       <input class="field" id="r-meta" placeholder="~30 мин · 4 порции"/>
       <label class="field">Выход / количество</label>
       <input class="field" id="r-yield" placeholder="4 порции"/>
+      <label class="field">Порций (число)</label>
+      <input class="field" id="r-servings" type="number" min="1" placeholder="4"/>
       <label class="field">Заметка (опционально)</label>
       <textarea class="field" id="r-note" placeholder="Совет, лайфхак…"></textarea>
     </div>
@@ -213,7 +215,7 @@
 <script type="module">
 import { db, doc, setDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
-import { escHtml as esc, normalizeIngName, slugify, getOpenAIKey, setOpenAIKey } from './js/utils.js';
+import { escHtml as esc, normalizeIngName, slugify, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
 
 // ── STATE ──
@@ -221,6 +223,7 @@ let images = []; // [{base64, mediaType, dataUrl}]
 let selectedEmoji = '🍽️';
 let selectedTags = [];
 let currentMode = 'photo';
+let parsedRecipe = null; // последний ответ GPT: структурные поля и attrs
 
 // ── API KEY ──
 const savedKey = getOpenAIKey();
@@ -304,12 +307,31 @@ const SYSTEM_PROMPT = `Ты помощник по кулинарии. Извле
   "category": "одно из: breakfast|soup|salad|veggie|meat|chicken|fish|pasta|baking|dessert|icecream",
   "meta": "время и выход, например: ~30 мин · 4 порции",
   "yield": "выход блюда, например: 4 порции",
+  "servings": число порций (int) или null если непонятно,
   "note": "важный совет если есть, иначе пустая строка",
-  "ingredients": [{"n": "ингредиент", "a": "количество"}],
-  "steps": ["шаг 1", "шаг 2"]
+  "ingredients": [{
+    "n": "ингредиент как в оригинале",
+    "a": "количество как в оригинале",
+    "qty": число или null,
+    "unit": "g|ml|pcs|tbsp|tsp|pinch" или null,
+    "ing": "каноническое название ингредиента: ед. число, нижний регистр, без прилагательных кроме смыслоразличительных ('болгарский перец' — да, 'спелый помидор' — нет)",
+    "opt": true если "по желанию/для подачи", иначе false
+  }],
+  "steps": ["шаг 1", "шаг 2"],
+  "attrs": {
+    "mealType": ["breakfast|lunch|dinner|snack|dessert" — все подходящие],
+    "mainProtein": "chicken|beef|pork|lamb|fish|seafood|legumes|eggs|dairy|none",
+    "cuisine": "кухня, напр. итальянская|русская|азиатская|... или null",
+    "activeMin": активное время готовки в минутах (int) или null,
+    "totalMin": общее время в минутах (int) или null,
+    "heaviness": "light|medium|heavy",
+    "spiciness": 0-3,
+    "dietFlags": ["vegetarian","vegan","gluten_free","lactose_free" — все подходящие],
+    "kidFriendly": true|false
+  }
 }
 
-Правила: переведи на русский, шаги не нумеруй, будь максимально точен.`;
+Правила: переведи на русский, шаги не нумеруй, qty/unit — переведи количество в одну из 6 единиц (штучные овощи/фрукты/яйца → pcs), будь максимально точен.`;
 
 // ── ANALYZE PHOTOS ──
 window.analyze = async function() {
@@ -413,6 +435,10 @@ function setStep(n, state, customText) {
 
 // ── FILL EDITOR ──
 function fillEditor(r) {
+  parsedRecipe = {
+    ...r,
+    ingredients: (r.ingredients || []).map(cleanStructuredEntry),
+  };
   selectedEmoji = r.emoji || '🍽️';
   selectedTags = r.category ? [r.category] : [];
 
@@ -422,6 +448,7 @@ function fillEditor(r) {
   document.getElementById('r-title').value = r.title || '';
   document.getElementById('r-meta').value = r.meta || '';
   document.getElementById('r-yield').value = r.yield || '';
+  document.getElementById('r-servings').value = Number(r.servings) > 0 ? Number(r.servings) : '';
   document.getElementById('r-note').value = r.note || '';
 
   const il = document.getElementById('ing-list');
@@ -473,21 +500,28 @@ window.saveToFirebase = async function() {
   const title = document.getElementById('r-title').value.trim();
   if (!title) { toast('Введи название рецепта'); return; }
 
+  // Неизменённые строки сохраняют структурные поля (qty/unit/ing) из разбора GPT
+  const parsedByKey = new Map((parsedRecipe?.ingredients || []).map(i => [i.n+'|'+i.a, i]));
   const ingredients = [...document.querySelectorAll('.ing-row')].map(row => {
     const ins = row.querySelectorAll('input');
-    return { n: ins[0].value.trim(), a: ins[1].value.trim() };
+    const n = ins[0].value.trim(), a = ins[1].value.trim();
+    const prev = parsedByKey.get(n+'|'+a);
+    return prev ? { ...prev, n, a } : { n, a };
   }).filter(i => i.n);
 
   const steps = [...document.querySelectorAll('.step-row textarea')].map(t => t.value.trim()).filter(Boolean);
 
   const id = slugify(title);
+  const servingsVal = parseInt(document.getElementById('r-servings').value, 10);
 
   const recipe = {
     id, emoji: selectedEmoji, title,
     meta: document.getElementById('r-meta').value.trim(),
     yield: document.getElementById('r-yield').value.trim(),
     note: document.getElementById('r-note').value.trim(),
-    tags: selectedTags, ingredients, steps
+    tags: selectedTags, ingredients, steps,
+    ...(servingsVal > 0 ? { servings: servingsVal } : {}),
+    ...(parsedRecipe?.attrs ? { attrs: parsedRecipe.attrs } : {}),
   };
 
   const btn = document.getElementById('save-btn');
@@ -507,6 +541,7 @@ window.saveToFirebase = async function() {
     setTimeout(() => {
       btn.disabled = false; btn.textContent = '🔥 Сохранить в Firebase';
       // Reset
+      parsedRecipe = null;
       images = [];
       renderThumbs();
       document.getElementById('drop-zone').style.display = 'block';

@@ -1,0 +1,10 @@
+{
+  "name": "natas-kitchen",
+  "private": true,
+  "type": "module",
+  "description": "Личная коллекция рецептов — статическое приложение без сборки; package.json нужен только для тестов",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "serve": "npx serve ."
+  }
+}
