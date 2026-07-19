@@ -16,12 +16,17 @@ export function weekStartISO(d = new Date()) {
 }
 
 // Сетка слотов из профиля семьи: какие приёмы пищи планируем.
+// По умолчанию (weekendFull !== false) суббота и воскресенье планируют
+// все три приёма — в выходные семья ест дома; будни идут по planMeals.
 export function buildSlots(profile) {
   const meals = profile?.planMeals?.length ? profile.planMeals : ['dinner'];
+  const weekendAll = profile?.weekendFull !== false;
   const slots = [];
   for (const day of DAYS) {
+    const dayMeals = weekendAll && (day === 'sat' || day === 'sun')
+      ? ['breakfast', 'lunch', 'dinner'] : meals;
     for (const meal of ['breakfast', 'lunch', 'dinner']) {
-      if (meals.includes(meal)) slots.push({ id: `${day}_${meal}`, day, meal });
+      if (dayMeals.includes(meal)) slots.push({ id: `${day}_${meal}`, day, meal });
     }
   }
   return slots;
