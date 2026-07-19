@@ -259,6 +259,22 @@
     .fab-camera{width:48px;height:48px;border-radius:50%;background:var(--amber-light);color:var(--white);font-size:22px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(212,132,58,.4);display:flex;align-items:center;justify-content:center;transition:transform .2s;}
     .fab-camera:active{transform:scale(.92);}
 
+    /* ── AUTH / ONBOARDING ── */
+    #auth-screen,#onboarding-screen{display:none;min-height:100vh;flex-direction:column;}
+    .auth-body{padding:26px 24px;flex:1;max-width:420px;width:100%;margin:0 auto;}
+    .auth-btn{width:100%;padding:14px;border-radius:14px;border:none;font-family:'Lato',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;}
+    .auth-btn.google{background:var(--white);color:var(--text);border:2px solid var(--warm);}
+    .auth-btn.primary{background:var(--brown);color:var(--cream);}
+    .auth-btn.secondary{background:var(--warm);color:var(--brown);}
+    .auth-btn:disabled{opacity:.55;}
+    .auth-divider{display:flex;align-items:center;gap:10px;color:var(--text-soft);font-size:12px;margin:14px 0;}
+    .auth-divider::before,.auth-divider::after{content:'';flex:1;height:1px;background:var(--warm);}
+    .auth-error{color:var(--red);font-size:13px;min-height:18px;margin-bottom:8px;}
+    .onb-card{background:var(--white);border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 2px 10px var(--shadow);}
+    .onb-card h3{font-family:'Playfair Display',serif;font-size:17px;color:var(--brown);margin-bottom:8px;}
+    .onb-card p{font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.5;}
+    .join-code-badge{display:inline-block;background:var(--warm);color:var(--brown);font-weight:700;font-size:18px;letter-spacing:.25em;padding:8px 14px;border-radius:10px;font-family:monospace;}
+
     /* ── PRINT: меню недели ── */
     /* Альбомный лист: Пн-Чт в левой колонке, Пт-Вс в правой (в выходные
        приёмов больше, колонки выравниваются). Экранный UI при печати скрыт. */
@@ -296,6 +312,54 @@
 <div id="loading">
   <div class="loading-emoji">🍽️</div>
   <div class="loading-text">Загружаю рецепты…</div>
+</div>
+
+<!-- AUTH -->
+<div id="auth-screen">
+  <div class="recipe-header">
+    <div class="recipe-title-big">🍽️ Моя кухня</div>
+    <div class="recipe-yield">семейный кулинарный ассистент</div>
+  </div>
+  <div class="auth-body">
+    <div class="section-label" style="margin-bottom:14px">Вход</div>
+    <button class="auth-btn google" onclick="authGoogle()">🔵 Войти через Google</button>
+    <div class="auth-divider">или по почте</div>
+    <input class="field-input" id="auth-email" type="email" placeholder="Почта" autocomplete="email"/>
+    <input class="field-input" id="auth-pass" type="password" placeholder="Пароль (мин. 6 символов)" autocomplete="current-password"/>
+    <div class="auth-error" id="auth-error"></div>
+    <button class="auth-btn primary" id="auth-login-btn" onclick="authEmail(false)">Войти</button>
+    <button class="auth-btn secondary" onclick="authEmail(true)">Зарегистрироваться</button>
+  </div>
+</div>
+
+<!-- ONBOARDING: выбор/создание семьи -->
+<div id="onboarding-screen">
+  <div class="recipe-header">
+    <div class="recipe-title-big">👪 Твоя семья</div>
+    <div class="recipe-yield" id="onb-hello"></div>
+  </div>
+  <div class="auth-body">
+    <div class="onb-card" id="onb-claim-card" style="display:none">
+      <h3>🍲 Здесь уже есть рецепты</h3>
+      <p>Найдена семья с рецептами и планами, созданными до входа по паролю. Если это твои данные — забери их (достаточно одного раза, для владельца).</p>
+      <div class="auth-error" id="onb-claim-error"></div>
+      <button class="auth-btn primary" id="onb-claim-btn" onclick="onbClaim()">Это моя семья — забрать</button>
+    </div>
+    <div class="onb-card">
+      <h3>🔑 Присоединиться по коду</h3>
+      <p>Попроси код приглашения у того, кто уже создал семью (он в разделе 👪 Семья).</p>
+      <input class="field-input" id="onb-code" placeholder="Например: K7M3ND" autocomplete="off" style="text-transform:uppercase"/>
+      <div class="auth-error" id="onb-join-error"></div>
+      <button class="auth-btn primary" id="onb-join-btn" onclick="onbJoin()">Присоединиться</button>
+    </div>
+    <div class="onb-card">
+      <h3>✨ Создать новую семью</h3>
+      <input class="field-input" id="onb-name" placeholder="Название, например: Мама и папа"/>
+      <div class="auth-error" id="onb-create-error"></div>
+      <button class="auth-btn secondary" id="onb-create-btn" onclick="onbCreate()">Создать</button>
+    </div>
+    <button class="auth-btn" style="background:none;color:var(--text-soft)" onclick="authSignOut()">← Выйти и войти другим аккаунтом</button>
+  </div>
 </div>
 
 <!-- HOME -->
@@ -497,6 +561,14 @@
     </label>
 
     <button class="save-btn" onclick="saveFamily()">💾 Сохранить</button>
+
+    <div class="onb-card" id="fam-invite-card" style="display:none">
+      <h3>🔑 Пригласить в семью</h3>
+      <p>Отправь этот код — по нему из своего аккаунта присоединяются к вашей семье (общие меню, покупки и история готовки):</p>
+      <span class="join-code-badge" id="fam-join-code"></span>
+    </div>
+    <div class="mood-caption" id="fam-account" style="margin-bottom:8px"></div>
+    <button class="auth-btn" style="background:none;color:var(--text-soft);border:2px solid var(--warm);margin-bottom:40px" onclick="authSignOut()">🚪 Выйти из аккаунта</button>
   </div>
 </div>
 
@@ -545,9 +617,12 @@ import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.j
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT } from './js/nutrition.js';
-import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular } from './js/regular.js';
+import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular, filterForeignRegular } from './js/regular.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
-import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan } from './js/store.js';
+import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan,
+  initAuth, resolveHousehold, householdId, currentUserEmail, LEGACY_HOUSEHOLD_ID,
+  signInGoogle, signInEmail, registerEmail, signOutUser,
+  createHousehold, joinHouseholdByCode, legacyHouseholdUnclaimed, claimLegacyHousehold } from './js/store.js';
 import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor } from './js/planner.js';
 import { isBatchDish, mealTypesForRecipe } from './js/suggest.js';
 
@@ -580,14 +655,104 @@ async function loadRecipes() {
     loadRecipeStates(),
     ensureHousehold(),
   ]);
-  // История готовки семьи накладывается поверх общих рецептов
-  allRecipes = overlayStates(snap.docs.map(d => ({id: d.id, ...d.data()})), states);
+  // История готовки семьи накладывается поверх общих рецептов; легаси-поля
+  // на рецепте — история только легаси-семьи. Чужие регулярные скрываются.
+  const raw = overlayStates(snap.docs.map(d => ({id: d.id, ...d.data()})), states,
+    householdId() === LEGACY_HOUSEHOLD_ID);
+  allRecipes = filterForeignRegular(raw, householdId());
   allRecipes.sort((a,b) => (a.title||'').localeCompare(b.title||'', 'ru'));
   document.getElementById('loading').style.display = 'none';
   document.getElementById('home').style.display = 'flex';
   renderCards();
 }
-loadRecipes().catch(e => {
+
+// ── ЗАГРУЗКА: auth → семья → рецепты ──
+async function boot() {
+  const user = await initAuth();
+  if (!user) { show('auth-screen'); return; }
+  await enterApp();
+}
+
+// После входа: есть семья — в приложение, нет — онбординг.
+async function enterApp() {
+  document.getElementById('loading').style.display = 'flex';
+  const hid = await resolveHousehold();
+  if (!hid) { await showOnboarding(); return; }
+  await loadRecipes();
+}
+
+async function showOnboarding() {
+  document.getElementById('onb-hello').textContent = currentUserEmail();
+  ['onb-claim-error', 'onb-join-error', 'onb-create-error'].forEach(id =>
+    document.getElementById(id).textContent = '');
+  show('onboarding-screen');
+  // легаси-семья с данными до auth — предложить владельцу забрать её
+  try {
+    const claimable = await legacyHouseholdUnclaimed();
+    document.getElementById('onb-claim-card').style.display = claimable ? '' : 'none';
+  } catch (e) { console.error('claim check:', e); }
+}
+
+window.authGoogle = async function() {
+  try { await signInGoogle(); await enterApp(); }
+  catch (e) { document.getElementById('auth-error').textContent = authErrorText(e); }
+}
+
+window.authEmail = async function(register) {
+  const email = document.getElementById('auth-email').value.trim();
+  const pass = document.getElementById('auth-pass').value;
+  const err = document.getElementById('auth-error');
+  if (!email || pass.length < 6) { err.textContent = 'Укажи почту и пароль от 6 символов'; return; }
+  try {
+    if (register) await registerEmail(email, pass);
+    else await signInEmail(email, pass);
+    err.textContent = '';
+    await enterApp();
+  } catch (e) { err.textContent = authErrorText(e); }
+}
+
+function authErrorText(e) {
+  const code = e?.code || '';
+  if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found'))
+    return 'Неверная почта или пароль. Если аккаунта ещё нет — «Зарегистрироваться».';
+  if (code.includes('email-already-in-use')) return 'Эта почта уже зарегистрирована — попробуй «Войти».';
+  if (code.includes('invalid-email')) return 'Странная почта — проверь написание.';
+  if (code.includes('popup')) return 'Окно входа закрылось — попробуй ещё раз.';
+  return 'Не получилось: ' + (e?.message || e);
+}
+
+window.authSignOut = async function() {
+  await signOutUser();
+  location.reload(); // чистый старт без остатков состояния семьи
+}
+
+window.onbCreate = async function() {
+  const name = document.getElementById('onb-name').value.trim();
+  const err = document.getElementById('onb-create-error');
+  if (!name) { err.textContent = 'Придумай название семьи'; return; }
+  try { await createHousehold(name); await loadRecipes(); }
+  catch (e) { err.textContent = 'Не получилось: ' + e.message; }
+}
+
+window.onbJoin = async function() {
+  const err = document.getElementById('onb-join-error');
+  try {
+    const hid = await joinHouseholdByCode(document.getElementById('onb-code').value);
+    if (!hid) { err.textContent = 'Код не найден — проверь и попробуй ещё раз'; return; }
+    await loadRecipes();
+  } catch (e) { err.textContent = 'Не получилось: ' + e.message; }
+}
+
+window.onbClaim = async function() {
+  const err = document.getElementById('onb-claim-error');
+  try {
+    const ok = await claimLegacyHousehold();
+    if (!ok) { err.textContent = 'Семью уже забрали — присоединяйся по коду'; return; }
+    await loadRecipes();
+  } catch (e) { err.textContent = 'Не получилось: ' + e.message; }
+}
+
+boot().catch(e => {
   document.getElementById('loading').innerHTML = '<div style="color:#e8a85f;font-size:18px;padding:20px;text-align:center;">Ошибка загрузки 😢<br><small>' + escHtml(e.message) + '</small></div>';
 });
 
@@ -1609,6 +1774,14 @@ window.openFamily = async function() {
   document.getElementById('fam-rhythm').innerHTML = DAYS.map(d =>
     `<div class="rhythm-row"><span>${DAY_LABELS[d]}</span>
      <input type="number" min="5" id="rhythm-${d}" value="${household.rhythm?.[d] ?? ''}" placeholder="∞"/></div>`).join('');
+  // код приглашения и аккаунт
+  const inviteCard = document.getElementById('fam-invite-card');
+  if (household.joinCode) {
+    inviteCard.style.display = '';
+    document.getElementById('fam-join-code').textContent = household.joinCode;
+  } else inviteCard.style.display = 'none';
+  document.getElementById('fam-account').textContent =
+    currentUserEmail() ? `аккаунт: ${currentUserEmail()}` : '';
   show('family-screen');
   window.scrollTo(0, 0);
 }
@@ -1629,6 +1802,7 @@ window.saveFamily = async function() {
   });
   const qv = id => Math.max(0, parseInt(document.getElementById(id).value, 10) || 0);
   household = {
+    ...household, // служебные поля (ownerUid, joinCode) не затираются
     name: document.getElementById('f-name').value.trim() || 'Моя семья',
     members: members.length ? members : [{ name: 'Я', coeff: 1 }],
     planMeals: planMeals.length ? planMeals : ['dinner'],
@@ -1669,7 +1843,7 @@ window.parseRegularDishes = async function() {
     saveHousehold(household).catch(e => console.error('saveHousehold:', e));
 
     const parsed = await callJsonGPT(REGULAR_PROMPT, buildRegularUserMsg(text, count), apiKey, 8000);
-    const created = normalizeParsedRegular(parsed, ownerId());
+    const created = normalizeParsedRegular(parsed, ownerId(), householdId());
     if (!created.length) throw new Error('не удалось выделить блюда из описания');
     for (const r of created) {
       await setDoc(doc(db, 'recipes', r.id), r);
@@ -1842,7 +2016,7 @@ window.goHome = function() {
 }
 
 function show(id) {
-  ['loading','home','recipe-screen','editor-screen','idea-screen','week-screen','family-screen'].forEach(s => {
+  ['loading','home','recipe-screen','editor-screen','idea-screen','week-screen','family-screen','auth-screen','onboarding-screen'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.style.display = (s===id) ? 'flex' : 'none';
   });

@@ -81,7 +81,8 @@
 </div>
 
 <script type="module">
-import { db, collection, getDocs, doc, setDoc } from '../js/firebase.js';
+import { db, collection, getDocs, doc, setDoc, authReady } from '../js/firebase.js';
+await authReady; // запросы должны уйти с auth-токеном (см. firestore.rules)
 import { escHtml, normalizeIngName, getOpenAIKey, setOpenAIKey } from '../js/utils.js';
 import { expandIngredients, callJsonGPT } from '../js/nutrition-core.js';
 

@@ -1,33 +1,66 @@
-// Firestore security rules — ВАЖНО: сейчас база, скорее всего, открыта на
-// чтение и запись всем ("test mode"). Это значит, что любой человек, открывший
-// исходный код страницы, может удалить или изменить все рецепты.
+// Firestore security rules для мульти-семейной модели.
 //
-// Минимальный безопасный вариант до внедрения аутентификации:
-// публичное чтение, запись только для владельца (после включения
-// Firebase Authentication → Google Sign-In и подстановки своего UID).
+// ВАЖНО: пока эти правила не задеплоены, база открыта («test mode»).
+// Перед тестом с тремя семьями:
+//   1. Firebase Console → Authentication → включить провайдеры
+//      Google и Email/Password.
+//   2. Authentication → Settings → Authorized domains → добавить
+//      natalyatsarapaeva-tech.github.io
+//   3. Вставить эти правила: Console → Firestore Database → Rules
+//      (или firebase deploy --only firestore:rules).
 //
-// Деплой: firebase deploy --only firestore:rules
-// или вставить в Firebase Console → Firestore Database → Rules.
+// Модель:
+//   users/{uid}        — маппинг пользователь → семья (пишет только сам)
+//   households/{hid}   — профиль семьи; подколлекции recipeState/plans — только членам
+//   recipes/{id}       — общая книга: читают все вошедшие, правит автор
+//   nutrition/{id}     — общий справочник КБЖУ (факты, не мнения)
 
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // TODO: заменить на реальный UID владельца после включения Firebase Auth,
-    // либо на `request.auth != null` для любого вошедшего пользователя.
-    function isOwner() {
-      return request.auth != null && request.auth.uid == 'REPLACE_WITH_OWNER_UID';
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Семья текущего пользователя из users/{uid}
+    function myHousehold() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.householdId;
+    }
+
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /households/{hid} {
+      // читать нужно всем вошедшим: поиск семьи по joinCode при онбординге
+      allow read: if signedIn();
+      // создание новой семьи — любой вошедший; владелец записывается в ownerUid
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      // править может член семьи; незанятую легаси-семью (без ownerUid)
+      // может забрать первый вошедший (claim владельца)
+      allow update: if signedIn()
+        && (myHousehold() == hid || !('ownerUid' in resource.data));
+
+      match /{sub=**} {
+        allow read, write: if signedIn() && myHousehold() == hid;
+      }
     }
 
     match /recipes/{recipeId} {
-      allow read: if true;
-      allow write: if isOwner();
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      // правит автор; легаси-рецепты (createdBy 'default' или отсутствует) —
+      // члены легаси-семьи 'default'
+      allow update, delete: if signedIn()
+        && (resource.data.createdBy == request.auth.uid
+            || ((!('createdBy' in resource.data) || resource.data.createdBy == 'default')
+                && myHousehold() == 'default'));
     }
 
     match /nutrition/{ingredientId} {
-      allow read: if true;
-      allow write: if isOwner();
+      allow read, write: if signedIn();
     }
   }
 }

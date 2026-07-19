@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REGULAR_TAG, isRegularRecipe, regularRecipeId, clampRegularCount,
-  buildRegularUserMsg, normalizeParsedRegular,
+  buildRegularUserMsg, normalizeParsedRegular, filterForeignRegular,
 } from '../js/regular.js';
 
 test('isRegularRecipe: по тэгу', () => {
@@ -81,4 +81,37 @@ test('normalizeParsedRegular: мусорный ответ — пустой сп�
   assert.deepEqual(normalizeParsedRegular(null), []);
   assert.deepEqual(normalizeParsedRegular({}), []);
   assert.deepEqual(normalizeParsedRegular({ recipes: 'не массив' }), []);
+});
+
+test('regularRecipeId: пер-семейный, легаси-формат для default', () => {
+  assert.equal(regularRecipeId('Омлет', null), 'reg-омлет');
+  assert.equal(regularRecipeId('Омлет', 'default'), 'reg-омлет');
+  assert.equal(regularRecipeId('Омлет', 'sestra-x1'), 'reg-sestra-x1-омлет');
+  assert.equal(regularRecipeId('!!!', 'sestra-x1'), '', 'пустой слаг — пустой id');
+});
+
+test('normalizeParsedRegular: householdId пишется на рецепт и входит в id', () => {
+  const out = normalizeParsedRegular(PARSED, 'uid1', 'sestra-x1');
+  assert.equal(out[0].householdId, 'sestra-x1');
+  assert.equal(out[0].id, 'reg-sestra-x1-гречка-с-курицей');
+  assert.equal(out[0].createdBy, 'uid1');
+  // без семьи (легаси/тесты) — прежний формат
+  const legacy = normalizeParsedRegular(PARSED, 'default');
+  assert.equal(legacy[0].id, 'reg-гречка-с-курицей');
+  assert.equal(legacy[0].householdId, undefined);
+});
+
+test('filterForeignRegular: чужие регулярные скрыты, базовые и свои — видны', () => {
+  const recipes = [
+    { id: 'base', tags: ['soup'] },
+    { id: 'my-reg', tags: ['regular'], householdId: 'sestra-x1' },
+    { id: 'their-reg', tags: ['regular'], householdId: 'mama-x2' },
+    { id: 'legacy-reg', tags: ['regular'] }, // без поля — семьи default
+  ];
+  assert.deepEqual(filterForeignRegular(recipes, 'sestra-x1').map(r => r.id),
+    ['base', 'my-reg']);
+  assert.deepEqual(filterForeignRegular(recipes, 'default').map(r => r.id),
+    ['base', 'legacy-reg']);
+  assert.deepEqual(filterForeignRegular(recipes, null).map(r => r.id),
+    ['base', 'legacy-reg'], 'без семьи — как легаси');
 });

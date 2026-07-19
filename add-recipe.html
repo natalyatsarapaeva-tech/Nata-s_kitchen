@@ -214,10 +214,13 @@
 
 <script type="module">
 import { db, doc, setDoc } from './js/firebase.js';
-import { ownerId } from './js/store.js';
+import { ownerId, initAuth } from './js/store.js';
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml as esc, normalizeIngName, slugify, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
+
+// Импорт пишет рецепты с createdBy = uid — без входа отправляем на главную.
+if (!await initAuth()) location.replace('index.html');
 
 // ── STATE ──
 let images = []; // [{base64, mediaType, dataUrl}]
