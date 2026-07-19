@@ -211,8 +211,9 @@
     .ws-actions{display:grid;grid-template-columns:repeat(2,30px);gap:2px;flex-shrink:0;}
     .ws-btn{background:none;border:none;font-size:15px;cursor:pointer;padding:3px;opacity:.7;line-height:1;}
     .ws-btn:active{transform:scale(.9);}
-    .ws-note-row{display:flex;align-items:center;gap:7px;margin:-2px 2px 8px;font-size:13px;}
-    .ws-note-input{flex:1;padding:8px 12px;border-radius:10px;border:2px dashed var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:13px;color:var(--text);outline:none;}
+    .ws-note-row{display:flex;align-items:flex-start;gap:7px;margin:-2px 2px 8px;font-size:13px;}
+    .ws-note-row span{margin-top:8px;}
+    .ws-note-input{flex:1;padding:8px 12px;border-radius:10px;border:2px dashed var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:13px;line-height:1.45;color:var(--text);outline:none;resize:none;}
     .ws-note-input:focus{border-color:var(--amber);}
     .week-toolbar{display:flex;gap:8px;margin-bottom:16px;}
     .week-totals{background:var(--warm);border-radius:12px;padding:10px 14px;font-size:13px;color:var(--brown);margin-bottom:18px;}
@@ -257,6 +258,28 @@
     .fab-group{position:fixed;bottom:28px;right:24px;display:flex;flex-direction:column;align-items:flex-end;gap:12px;z-index:100;}
     .fab-camera{width:48px;height:48px;border-radius:50%;background:var(--amber-light);color:var(--white);font-size:22px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(212,132,58,.4);display:flex;align-items:center;justify-content:center;transition:transform .2s;}
     .fab-camera:active{transform:scale(.92);}
+
+    /* ── PRINT: меню недели ── */
+    /* Альбомный лист: Пн-Чт в левой колонке, Пт-Вс в правой (в выходные
+       приёмов больше, колонки выравниваются). Экранный UI при печати скрыт. */
+    #print-week{display:none;}
+    @media print{
+      body>*:not(#print-week){display:none!important;}
+      #print-week{display:block!important;}
+      body{background:#fff;}
+    }
+    @page{size:A4 landscape;margin:10mm;}
+    .pw-title{font-family:'Playfair Display',serif;font-size:19px;color:#5c3d2e;margin-bottom:5mm;}
+    .pw-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10mm;align-items:start;}
+    .pw-day{margin-bottom:4mm;break-inside:avoid;}
+    .pw-day-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5c3d2e;border-bottom:1.5pt solid #5c3d2e;padding-bottom:1mm;margin-bottom:1.5mm;}
+    .pw-slot{display:flex;gap:3mm;align-items:baseline;font-size:11.5px;padding:.8mm 0;border-bottom:.5pt solid #e8ddcf;}
+    .pw-slot:last-child{border-bottom:none;}
+    .pw-meal{flex-shrink:0;width:17mm;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:#8b6355;}
+    .pw-dish{flex:1;color:#2e1f14;}
+    .pw-dish .pw-mark{color:#8b6355;font-size:10px;}
+    .pw-empty{color:#aaa;}
+    .pw-note{font-size:10.5px;font-style:italic;color:#555;margin:0 0 .8mm 20mm;white-space:pre-wrap;}
 
     /* ── ANIM ── */
     .fade-in{animation:fadeIn .3s ease both;}
@@ -399,6 +422,7 @@
   <div class="recipe-body">
     <div class="week-toolbar">
       <button class="idea-act primary" onclick="generatePlanWeek()">✨ Сгенерировать</button>
+      <button class="idea-act secondary" onclick="printWeek()">🖨 На печать</button>
       <button class="idea-act secondary" onclick="clearPlanWeek()">Очистить</button>
     </div>
     <div id="week-grid"></div>
@@ -407,6 +431,9 @@
     <div class="ingredients-box" id="shopping-list"><div class="idea-empty">Сгенерируй неделю — список соберётся сам</div></div>
   </div>
 </div>
+
+<!-- PRINT: печатная версия меню недели (заполняется в printWeek) -->
+<div id="print-week"></div>
 
 <!-- PICKER: ручной выбор блюда в слот -->
 <div id="picker" class="picker-overlay" onclick="if(event.target===this)closePicker()">
@@ -432,11 +459,14 @@
     <div id="fam-members"></div>
     <button class="add-row-btn" onclick="addFamMember()">+ Добавить</button>
 
-    <label class="field-label">Что планируем</label>
-    <div class="meal-checks">
+    <label class="field-label">Что планируем (будни)</label>
+    <div class="meal-checks" style="margin-bottom:8px">
       <label><input type="checkbox" id="f-breakfast"/> Завтраки</label>
       <label><input type="checkbox" id="f-lunch"/> Обеды</label>
       <label><input type="checkbox" id="f-dinner" checked/> Ужины</label>
+    </div>
+    <div class="meal-checks">
+      <label><input type="checkbox" id="f-weekend-full" checked/> Сб-Вс — все три приёма</label>
     </div>
 
     <label class="field-label">Время на ужин по дням (мин, пусто — не ограничено)</label>
@@ -1326,9 +1356,9 @@ function renderWeek() {
 function renderSlotNote(slotId) {
   const note = currentPlan.notes?.[slotId];
   if (note == null) return '';
-  return `<div class="ws-note-row"><span>📝</span><input class="ws-note-input" id="note-${slotId}"
-    value="${escHtml(note)}" placeholder="Гарнир, заметка, особое блюдо…"
-    onchange="weekNoteChange('${slotId}', this.value)"/></div>`;
+  return `<div class="ws-note-row"><span>📝</span><textarea class="ws-note-input" id="note-${slotId}"
+    rows="2" placeholder="Гарнир, заметка, особое блюдо…"
+    onchange="weekNoteChange('${slotId}', this.value)">${escHtml(note)}</textarea></div>`;
 }
 
 function renderSlot(s, byId) {
@@ -1403,6 +1433,52 @@ function renderShopping(byId) {
     </div>`;
   }
   box.innerHTML = html;
+}
+
+// ── ПЕЧАТЬ НЕДЕЛИ ──
+// Собирает печатную версию всего меню: альбомный лист, Пн-Чт в левой
+// колонке, Пт-Вс в правой (в выходные приёмов больше). Заметки печатаются
+// под своим приёмом.
+const PRINT_DAY_LABELS = {
+  mon: 'Понедельник', tue: 'Вторник', wed: 'Среда', thu: 'Четверг',
+  fri: 'Пятница', sat: 'Суббота', sun: 'Воскресенье',
+};
+
+window.printWeek = function() {
+  const byId = recipesById();
+  const slots = buildSlots(household);
+  const byDay = {};
+  slots.forEach(s => { (byDay[s.day] = byDay[s.day] || []).push(s); });
+
+  const slotHtml = s => {
+    const slot = currentPlan.slots?.[s.id];
+    const r = slot?.recipeId ? byId[slot.recipeId] : null;
+    let dish = '<span class="pw-empty">—</span>';
+    if (r) {
+      dish = `${escHtml(r.emoji || '')} ${escHtml(r.title)}`;
+      if (slot.kind === 'reheat') dish += ' <span class="pw-mark">♨ разогрев</span>';
+      else if (slot.kind === 'batch') dish += ` <span class="pw-mark">×${batchFactor(r, profileForPlanner())} ❄</span>`;
+    }
+    const note = currentPlan.notes?.[s.id];
+    return `<div class="pw-slot">
+        <span class="pw-meal">${MEAL_LABELS[s.meal].replace(/^\S+\s/, '')}</span>
+        <span class="pw-dish">${dish}</span>
+      </div>` +
+      (note ? `<div class="pw-note">📝 ${escHtml(note)}</div>` : '');
+  };
+  const dayHtml = day => `<div class="pw-day">
+      <div class="pw-day-label">${PRINT_DAY_LABELS[day]}</div>
+      ${byDay[day].map(slotHtml).join('')}
+    </div>`;
+  const col = days => days.filter(d => byDay[d]).map(dayHtml).join('');
+
+  document.getElementById('print-week').innerHTML = `
+    <div class="pw-title">📅 Меню недели · ${weekRangeLabel(currentPlan.weekStart || weekStartISO())}</div>
+    <div class="pw-grid">
+      <div>${col(['mon', 'tue', 'wed', 'thu'])}</div>
+      <div>${col(['fri', 'sat', 'sun'])}</div>
+    </div>`;
+  window.print();
 }
 
 // ── РУЧНОЙ ВЫБОР БЛЮДА В СЛОТ ──
@@ -1516,6 +1592,7 @@ window.openFamily = async function() {
   document.getElementById('f-breakfast').checked = !!household.planMeals?.includes('breakfast');
   document.getElementById('f-lunch').checked = !!household.planMeals?.includes('lunch');
   document.getElementById('f-dinner').checked = household.planMeals?.includes('dinner') ?? true;
+  document.getElementById('f-weekend-full').checked = household.weekendFull !== false;
   document.getElementById('f-exclude').value = household.excludeText || '';
   document.getElementById('f-regular').value = household.regularDishesText || '';
   document.getElementById('f-regular-count').value = '';
@@ -1555,6 +1632,7 @@ window.saveFamily = async function() {
     name: document.getElementById('f-name').value.trim() || 'Моя семья',
     members: members.length ? members : [{ name: 'Я', coeff: 1 }],
     planMeals: planMeals.length ? planMeals : ['dinner'],
+    weekendFull: document.getElementById('f-weekend-full').checked,
     rhythm,
     excludeText: document.getElementById('f-exclude').value.trim(),
     regularDishesText: document.getElementById('f-regular').value.trim(),

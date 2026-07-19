@@ -17,12 +17,20 @@ test('weekStartISO: понедельник недели', () => {
 });
 
 test('buildSlots: из настроек семьи', () => {
-  assert.equal(buildSlots({ planMeals: ['dinner'] }).length, 7);
-  const both = buildSlots({ planMeals: ['lunch', 'dinner'] });
+  assert.equal(buildSlots({ planMeals: ['dinner'], weekendFull: false }).length, 7);
+  const both = buildSlots({ planMeals: ['lunch', 'dinner'], weekendFull: false });
   assert.equal(both.length, 14);
   assert.deepEqual(both.slice(0, 2).map(s => s.id), ['mon_lunch', 'mon_dinner']);
-  // дефолт — ужины
-  assert.equal(buildSlots({}).length, 7);
+});
+
+test('buildSlots: по умолчанию сб-вс планируют все три приёма', () => {
+  const slots = buildSlots({ planMeals: ['dinner'] });
+  assert.equal(slots.length, 11, '5 будних ужинов + 2×3 выходных');
+  assert.ok(slots.some(s => s.id === 'sat_breakfast'));
+  assert.ok(slots.some(s => s.id === 'sun_lunch'));
+  assert.ok(!slots.some(s => s.id === 'mon_breakfast'), 'будни — только из planMeals');
+  assert.equal(buildSlots({}).length, 11, 'дефолтный профиль — то же самое');
+  assert.equal(buildSlots({ planMeals: ['breakfast', 'lunch', 'dinner'] }).length, 21);
 });
 
 const CATALOG = Array.from({ length: 10 }, (_, i) => ({
@@ -31,7 +39,7 @@ const CATALOG = Array.from({ length: 10 }, (_, i) => ({
 }));
 
 test('generateWeek: заполняет все слоты без повторов', () => {
-  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
   const slots = generateWeek(CATALOG, profile, {}, null, NOW, () => 0);
   const ids = Object.values(slots).map(s => s.recipeId);
   assert.equal(ids.length, 7);
@@ -40,7 +48,7 @@ test('generateWeek: заполняет все слоты без повторов
 });
 
 test('generateWeek: залоченные слоты сохраняются и участвуют в анти-повторах', () => {
-  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
   const existing = { mon_dinner: { recipeId: 'r5', locked: true } };
   const slots = generateWeek(CATALOG, profile, existing, null, NOW, () => 0);
   assert.equal(slots.mon_dinner.recipeId, 'r5');
@@ -51,7 +59,7 @@ test('generateWeek: залоченные слоты сохраняются и у
 
 test('generateWeek: маленький каталог — повторы допустимы, слоты не пустуют', () => {
   const small = CATALOG.slice(0, 3);
-  const slots = generateWeek(small, { planMeals: ['dinner'], rhythm: {} }, {}, null, NOW, () => 0);
+  const slots = generateWeek(small, { planMeals: ['dinner'], weekendFull: false, rhythm: {} }, {}, null, NOW, () => 0);
   assert.ok(Object.values(slots).every(s => s.recipeId), 'все слоты заполнены за счёт второго круга');
 });
 
@@ -61,7 +69,7 @@ test('generateWeek: бюджет времени дня и исключения �
     { id: 'fast', title: 'Быстрое', tags: ['veggie'], meta: '~15 мин', ingredients: [{ n: 'Огурец', a: '2 шт' }] },
     { id: 'nuts', title: 'С орехами', tags: ['veggie'], meta: '~15 мин', ingredients: [{ n: 'Грецкие орехи', a: '100 г' }] },
   ];
-  const profile = { planMeals: ['dinner'], rhythm: { mon: 20 }, exclude: ['орехи'] };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: { mon: 20 }, exclude: ['орехи'] };
   const slots = generateWeek(catalog, profile, {}, null, NOW, () => 0);
   assert.equal(slots.mon_dinner.recipeId, 'fast'); // в 20 минут влезает только быстрое без орехов
   const all = Object.values(slots).map(s => s.recipeId);
@@ -69,7 +77,7 @@ test('generateWeek: бюджет времени дня и исключения �
 });
 
 test('rerollSlot: не предлагает текущее блюдо и занятые в других слотах', () => {
-  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
   const slots = {
     mon_dinner: { recipeId: 'r0', locked: false },
     tue_dinner: { recipeId: 'r1', locked: false },
@@ -164,7 +172,7 @@ test('generateWeek: батч-блюдо занимает разогрев сле
       id: `v${i}`, title: `Овощи ${i}`, tags: ['veggie'], meta: '~20 мин',
       ingredients: [{ n: `Овощ${i}`, a: '100 г' }] })),
   ];
-  const profile = { planMeals: ['lunch', 'dinner'], rhythm: {}, members: [{ name: 'а', coeff: 1 }] };
+  const profile = { planMeals: ['lunch', 'dinner'], weekendFull: false, rhythm: {}, members: [{ name: 'а', coeff: 1 }] };
   const slots = generateWeek(catalog, profile, {}, null, NOW, () => 0);
   // гуляш побеждает по давности → пн ужин? найдём его слот готовки
   const cookEntry = Object.entries(slots).find(([, s]) => s.recipeId === 'gulyash' && s.kind === 'batch');
@@ -212,7 +220,7 @@ test('clearBatchLinks + applyBatchLink', async () => {
 });
 
 test('buildSlots: завтраки включаются в сетку', () => {
-  const slots = buildSlots({ planMeals: ['breakfast', 'dinner'] });
+  const slots = buildSlots({ planMeals: ['breakfast', 'dinner'], weekendFull: false });
   assert.equal(slots.length, 14);
   assert.deepEqual(slots.slice(0, 2).map(s => s.id), ['mon_breakfast', 'mon_dinner']);
 });
@@ -223,6 +231,8 @@ test('findReheatSlotId: завтрак → завтрак, ужин → обед
   assert.equal(findReheatSlotId({ planMeals: ['lunch', 'dinner'] }, 'mon_dinner'), 'tue_lunch');
   assert.equal(findReheatSlotId({ planMeals: ['dinner'] }, 'mon_dinner'), 'tue_dinner');
   assert.equal(findReheatSlotId({ planMeals: ['dinner'] }, 'sun_dinner'), null);
+  // субботний батч при полных выходных разогревается в воскресный обед
+  assert.equal(findReheatSlotId({ planMeals: ['dinner'] }, 'sat_dinner'), 'sun_lunch');
 });
 
 // ── Канонизация списка покупок ──
@@ -300,7 +310,7 @@ const QUOTA_CATALOG = [
 
 test('generateWeek: квоты ужинов соблюдаются (разогрев батча тоже расходует квоту)', async () => {
   const { proteinClass } = await import('../js/suggest.js');
-  const profile = { planMeals: ['dinner'], rhythm: {},
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {},
     dinnerQuota: { meat: 3, fish: 2, veg: 2 } };
   const slots = generateWeek(QUOTA_CATALOG, profile, {}, null, NOW, () => 0);
   const byId = {}; QUOTA_CATALOG.forEach(r => byId[r.id] = r);
@@ -319,7 +329,7 @@ test('generateWeek: квоты ужинов соблюдаются (разогр
 
 test('generateWeek: свежие мясные ужины чередуются средний → сытный', async () => {
   const { effectiveHeaviness } = await import('../js/suggest.js');
-  const profile = { planMeals: ['dinner'], rhythm: {},
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {},
     dinnerQuota: { meat: 3, fish: 2, veg: 2 } };
   const slots = generateWeek(QUOTA_CATALOG, profile, {}, null, NOW, () => 0);
   const byId = {}; QUOTA_CATALOG.forEach(r => byId[r.id] = r);
@@ -335,7 +345,7 @@ test('generateWeek: свежие мясные ужины чередуются с
 
 test('generateWeek: залоченный мясной ужин расходует квоту', async () => {
   const { proteinClass } = await import('../js/suggest.js');
-  const profile = { planMeals: ['dinner'], rhythm: {},
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {},
     dinnerQuota: { meat: 1, fish: 0, veg: 6 } };
   const existing = { wed_dinner: { recipeId: 'gulyash', locked: true } };
   const slots = generateWeek(QUOTA_CATALOG, profile, existing, null, NOW, () => 0);
@@ -347,13 +357,13 @@ test('generateWeek: залоченный мясной ужин расходуе�
 
 test('generateWeek: квота на класс без кандидатов честно откатывается', () => {
   const noFish = QUOTA_CATALOG.filter(r => !['salmon', 'cod'].includes(r.id));
-  const profile = { planMeals: ['dinner'], rhythm: {}, dinnerQuota: { meat: 2, fish: 3, veg: 2 } };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {}, dinnerQuota: { meat: 2, fish: 3, veg: 2 } };
   const slots = generateWeek(noFish, profile, {}, null, NOW, () => 0);
   assert.ok(Object.values(slots).every(s => s.recipeId), 'слоты заполнены несмотря на невыполнимую рыбную квоту');
 });
 
 test('rerollSlot: сохраняет класс белка текущего блюда', () => {
-  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
   const slots = { mon_dinner: { recipeId: 'salmon' } };
   const next = rerollSlot(QUOTA_CATALOG, profile, slots, 'mon_dinner', null, NOW, () => 0);
   assert.equal(next.recipeId, 'cod', 'рыбный ужин остаётся рыбным');
@@ -388,7 +398,7 @@ test('pickBaseSlotIds: равномерно по свободным слотам
 });
 
 test('generateWeek: регулярные — основа, базовых ровно по лимиту', () => {
-  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
   const slots = generateWeek(MIXED_CATALOG, profile, {}, null, NOW, () => 0);
   const ids = Object.values(slots).map(s => s.recipeId);
   assert.ok(ids.every(Boolean), 'все слоты заполнены');
@@ -398,7 +408,7 @@ test('generateWeek: регулярные — основа, базовых ров
 });
 
 test('generateWeek: залоченные базовые расходуют базовый лимит', () => {
-  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
   const existing = {
     mon_dinner: { recipeId: 'base0', locked: true },
     thu_dinner: { recipeId: 'base1', locked: true },
@@ -413,20 +423,20 @@ test('generateWeek: залоченные базовые расходуют ба�
 
 test('generateWeek: без регулярных в каталоге поведение прежнее', () => {
   const baseOnly = MIXED_CATALOG.filter(r => r.id.startsWith('base'));
-  const slots = generateWeek(baseOnly, { planMeals: ['dinner'], rhythm: {} }, {}, null, NOW, () => 0);
+  const slots = generateWeek(baseOnly, { planMeals: ['dinner'], weekendFull: false, rhythm: {} }, {}, null, NOW, () => 0);
   assert.ok(Object.values(slots).every(s => s.recipeId), 'неделя строится целиком из базы');
 });
 
 test('generateWeek: мало регулярных — честный fallback в базу, слоты не пустуют', () => {
   const catalog = [...MIXED_CATALOG.filter(r => r.id.startsWith('base')), MIXED_CATALOG[6]]; // 6 базовых + 1 регулярное
-  const slots = generateWeek(catalog, { planMeals: ['dinner'], rhythm: {} }, {}, null, NOW, () => 0);
+  const slots = generateWeek(catalog, { planMeals: ['dinner'], weekendFull: false, rhythm: {} }, {}, null, NOW, () => 0);
   const ids = Object.values(slots).map(s => s.recipeId);
   assert.ok(ids.every(Boolean), 'все слоты заполнены');
   assert.ok(ids.includes('reg0'), 'единственное регулярное блюдо использовано');
 });
 
 test('rerollSlot: происхождение блюда сохраняется', () => {
-  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
   const next = rerollSlot(MIXED_CATALOG, profile,
     { mon_dinner: { recipeId: 'reg0' } }, 'mon_dinner', null, NOW, () => 0);
   assert.ok(next.recipeId.startsWith('reg'), 'регулярное меняется на регулярное');

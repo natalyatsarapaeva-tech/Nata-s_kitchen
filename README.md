@@ -8,7 +8,7 @@
 
 | Файл | Назначение |
 |---|---|
-| `index.html` | Всё основное приложение (SPA на экранах): список рецептов, карточка рецепта (множитель порций, КБЖУ, «✓ приготовил»), редактор, **🎲 Что приготовить?**, **📅 Меню недели**, **👪 Семья**, шторка ручного выбора блюда в слот |
+| `index.html` | Всё основное приложение (SPA на экранах): список рецептов, карточка рецепта (множитель порций, КБЖУ, «✓ приготовил»), редактор, **🎲 Что приготовить?**, **📅 Меню недели** (заметки «＋» к приёмам, 🖨 печать недели на альбомном A4 в две колонки Пн-Чт/Пт-Вс), **👪 Семья**, шторка ручного выбора блюда в слот |
 | `add-recipe.html` | Импорт рецепта из фото или текста через GPT-4o — сразу в структурной схеме с атрибутами планировщика |
 | `nutrition.html` | Админка справочника ингредиентов: сканирует рецепты, заполняет КБЖУ, unitG и атрибуты (категория, pantry-staple, хранение) через GPT; ссылка на миграцию |
 | `tools/migrate-recipes.html` | Миграция старых рецептов на структурную схему (qty/unit/канонический ингредиент, порции, атрибуты) — GPT батчами + ручная проверка needsReview |
@@ -38,7 +38,7 @@
   - Легаси-поля `timesCooked`/`lastCookedAt` на рецепте — только fallback, новые записи идут в recipeState.
 - **`nutrition/{canonicalName}`** — справочник ингредиентов (глобальный, факты):
   `{ kcal, protein, fat, carbs, unitG?, aliases?[], category?, isPantryStaple?, perishability?, storage? }` на 100 г.
-- **`households/default`** — профиль семьи: `{ name, members[{name,coeff}], planMeals[breakfast|lunch|dinner], rhythm{mon..sun: мин|null}, excludeText, dinnerQuota{meat,fish,veg}, regularDishesText, hideRegular }`.
+- **`households/default`** — профиль семьи: `{ name, members[{name,coeff}], planMeals[breakfast|lunch|dinner], rhythm{mon..sun: мин|null}, excludeText, dinnerQuota{meat,fish,veg}, regularDishesText, hideRegular, weekendFull }`. `planMeals` задаёт будни; при `weekendFull` (по умолчанию true) суббота и воскресенье планируют все три приёма.
 - **`households/default/recipeState/{recipeId}`** — история готовки семьи: `{ timesCooked, lastCookedAt }` (оверлей поверх рецептов, ленивая миграция).
 - **`households/default/plans/{weekStartISO}`** — план недели: `{ weekStart, slots{slotId: {recipeId, locked, kind?: batch|reheat, linkedTo?}}, checked{}, notes{slotId: текст} }`; slotId = `mon_dinner` и т.п., weekStart = понедельник `YYYY-MM-DD`. `notes` — свободные заметки к приёму пищи («＋» на слоте: гарнир, закуска, особое требование члена семьи), живут отдельно от слота и переживают реролл/генерацию. Кнопки замка в UI нет: `locked` ставится только ручным выбором из шторки и защищает слот от перегенерации.
 
@@ -67,7 +67,7 @@
 ## Тесты и запуск
 
 ```bash
-npm test     # node --test, 90 тестов, без зависимостей
+npm test     # node --test, 91 тест, без зависимостей
 npx serve .  # локально; file:// не работает (ES-модули)
 ```
 
