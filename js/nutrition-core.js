@@ -89,6 +89,9 @@ export const NUTRITION_PROMPT = `Ты диетолог. Верни ОДИН JSON
 - protein: число (г белков на 100г)
 - fat: число (г жиров на 100г)
 - carbs: число (г углеводов на 100г)
+- fiber: число (г пищевых волокон на 100г)
+- potassium: число (мг калия на 100г) — важно для почечной диеты
+- phosphorus: число (мг фосфора на 100г) — важно для почечной диеты
 - unitG: вес ОДНОГО среднего экземпляра в граммах — ОБЯЗАТЕЛЬНО для любого ингредиента который считают штуками или экземплярами: овощи, фрукты, яйца, грибы, и т.п. Примеры: яйцо=60, картофель=150, морковь=80, лук=100, свёкла=200, болгарский перец=150, помидор=100, огурец=100, кабачок=250, яблоко=150. Для сыпучих и жидких (мука, сахар, масло, молоко) — null.
 Одно десятичное. Данные для сырых продуктов по USDA.`;
 
@@ -121,13 +124,24 @@ export async function callNutritionGPT(names, apiKey) {
 }
 
 // Собирает валидный документ справочника из ответа GPT или null.
+// Микроэлементы (клетчатка/калий/фосфор) — опциональны: пишутся, только
+// если модель их вернула, чтобы не выдумывать нули для старых записей.
 export function nutritionPayload(vals) {
   if (!vals || vals.kcal == null) return null;
-  return {
+  const num = v => (v != null && !isNaN(+v) ? +v : null);
+  const out = {
     kcal: +vals.kcal, protein: +vals.protein || 0, fat: +vals.fat || 0, carbs: +vals.carbs || 0,
     ...(vals.unitG ? { unitG: +vals.unitG } : {})
   };
+  for (const m of ['fiber', 'potassium', 'phosphorus']) {
+    const v = num(vals[m]);
+    if (v != null) out[m] = v;
+  }
+  return out;
 }
+
+// Микроэлементы, которые суммируются наравне с КБЖУ (на 100 г в справочнике).
+export const MICROS = ['fiber', 'potassium', 'phosphorus'];
 
 // Разворачивает список ингредиентов: строки-разделители вида
 // "— ТЕСТО: Мука" превращаются в {divider:'ТЕСТО'} + {n:'Мука', a:…},
@@ -196,9 +210,13 @@ export function gramsForEntry(entry, dictDoc) {
 }
 
 // КБЖУ рецепта: суммирует по строкам, возвращает totals + per-serving.
+// Микроэлементы (клетчатка/калий/фосфор) суммируются, если есть в справочнике;
+// microMissing[m] = true, когда часть продуктов их не имеет и сумма — нижняя
+// оценка (в интерфейсе показываем «≥»). netCarbs = углеводы − клетчатка.
 export function computeRecipeNutrition(recipe, dict) {
   const rows = [];
-  const totals = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
+  const totals = { kcal: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, potassium: 0, phosphorus: 0 };
+  const microMissing = { fiber: false, potassium: false, phosphorus: false };
   let hasData = false, hasMissing = false;
 
   for (const i of expandIngredients(recipe.ingredients)) {
@@ -213,16 +231,23 @@ export function computeRecipeNutrition(recipe, dict) {
       f = nut.fat * grams / 100;
       c = nut.carbs * grams / 100;
       totals.kcal += kcal; totals.protein += p; totals.fat += f; totals.carbs += c;
+      for (const m of MICROS) {
+        if (nut[m] != null) totals[m] += nut[m] * grams / 100;
+        else microMissing[m] = true;
+      }
       hasData = true;
     }
     rows.push({ name: i.n, amount: i.a, grams, kcal, p, f, c });
   }
 
   const servings = Number(recipe.servings) > 0 ? Number(recipe.servings) : null;
+  const per = key => totals[key] / servings;
   const perServing = hasData && servings ? {
-    kcal: totals.kcal / servings, protein: totals.protein / servings,
-    fat: totals.fat / servings, carbs: totals.carbs / servings
+    kcal: per('kcal'), protein: per('protein'), fat: per('fat'), carbs: per('carbs'),
+    fiber: per('fiber'), potassium: per('potassium'), phosphorus: per('phosphorus'),
+    netCarbs: Math.max(0, per('carbs') - per('fiber')),
   } : null;
+  totals.netCarbs = Math.max(0, totals.carbs - totals.fiber);
 
-  return { rows, totals, perServing, servings, hasData, hasMissing };
+  return { rows, totals, perServing, servings, hasData, hasMissing, microMissing };
 }

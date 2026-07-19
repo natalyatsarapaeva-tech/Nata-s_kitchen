@@ -143,6 +143,8 @@ const DEFAULT_PROFILE = {
   excludeText: '', // продукты-исключения, через запятую
   regularDishesText: '', // привычные блюда «из головы» — сырьё для парсера регулярных
   hideRegular: false,    // скрывать регулярные рецепты из общего списка
+  substitutions: [],     // пер-семейные замены продуктов: [{from, to}]
+  showMicros: false,     // показывать клетчатку/калий/фосфор (диабет/почки)
 };
 
 function hid() { return currentHouseholdId || LEGACY_HOUSEHOLD_ID; }
