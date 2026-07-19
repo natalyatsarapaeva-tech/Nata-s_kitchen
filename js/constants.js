@@ -17,4 +17,5 @@ export const TAGS = [
   {id:'baking',label:'🧁 Выпечка'},
   {id:'dessert',label:'🍮 Десерты'},
   {id:'icecream',label:'🍦 Мороженое'},
+  {id:'regular',label:'🔁 Регулярные'}, // привычные блюда семьи «из головы»
 ];

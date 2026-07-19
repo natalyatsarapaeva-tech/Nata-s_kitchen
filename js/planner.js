@@ -2,6 +2,7 @@
 // Заполнение сетки использует тот же скоринг, что и «Что приготовить?».
 import { pickSuggestion, isBatchDish, proteinClass, effectiveHeaviness } from './suggest.js';
 import { expandIngredients, dictLookup, entryKey, gramsForEntry, computeRecipeNutrition, DEFAULT_UNIT_G } from './nutrition-core.js';
+import { isRegularRecipe } from './regular.js';
 
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const DAY_LABELS = { mon: 'Пн', tue: 'Вт', wed: 'Ср', thu: 'Чт', fri: 'Пт', sat: 'Сб', sun: 'Вс' };
@@ -40,6 +41,31 @@ export function findReheatSlotId(profile, cookSlotId) {
   return null;
 }
 
+// ── Регулярные блюда как основа недели ──
+// Если в каталоге есть рецепты с тэгом «Регулярные» (созданы из описания
+// привычной еды семьи), неделя строится в основном из них, а рецепты из
+// основной базы попадают в план дозированно: 2–4 блюда в неделю,
+// равномерно распределённые по свободным слотам.
+export const BASE_DISHES_MIN = 2;
+export const BASE_DISHES_MAX = 4;
+
+// Сколько блюд из основной базы положено на неделю из slotCount слотов.
+export function baseWeekTarget(slotCount) {
+  if (!slotCount) return 0;
+  return Math.min(slotCount,
+    Math.max(BASE_DISHES_MIN, Math.min(BASE_DISHES_MAX, Math.round(slotCount / 3))));
+}
+
+// Равномерно выбирает n слотов под «базовые» блюда из списка свободных.
+export function pickBaseSlotIds(slotIds, n) {
+  const out = new Set();
+  const take = Math.min(Math.max(0, n), slotIds.length);
+  if (!take) return out;
+  const step = slotIds.length / take;
+  for (let i = 0; i < take; i++) out.add(slotIds[Math.floor(step * (i + 0.5))]);
+  return out;
+}
+
 // Следующий класс ужина по квотам: не повторяем вчерашний класс, если есть
 // выбор; из доступных берём тот, которого осталось больше.
 function nextDinnerClass(quota, lastClass) {
@@ -71,6 +97,22 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     }
   }
 
+  // Регулярные блюда — основа недели; базовые дозируются по baseWeekTarget.
+  // Залоченные слоты с базовыми блюдами уже расходуют базовый лимит.
+  const regularPool = recipes.filter(isRegularRecipe);
+  const basePool = recipes.filter(r => !isRegularRecipe(r));
+  const mixActive = regularPool.length > 0 && basePool.length > 0;
+  let baseSlotSet = new Set();
+  if (mixActive) {
+    const lockedBase = slots.filter(s => {
+      const slot = out[s.id];
+      const r = slot?.recipeId ? byId[slot.recipeId] : null;
+      return r && slot.kind !== 'reheat' && !isRegularRecipe(r);
+    }).length;
+    const freeIds = slots.filter(s => !out[s.id]).map(s => s.id);
+    baseSlotSet = pickBaseSlotIds(freeIds, baseWeekTarget(slots.length) - lockedBase);
+  }
+
   // Квоты ужинов: залоченные ужины уже расходуют свою квоту
   const q = profile?.dinnerQuota || null;
   const quota = { meat: Math.max(0, +q?.meat || 0), fish: Math.max(0, +q?.fish || 0), veg: Math.max(0, +q?.veg || 0) };
@@ -100,11 +142,18 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     const maxMin = s.meal === 'dinner' ? (profile?.rhythm?.[s.day] ?? null) : null;
     const base = { meal: s.meal, maxMin, exclude, dict };
 
+    // Пул слота: в смешанном режиме регулярные — везде, кроме выделенных
+    // «базовых» слотов; второй пул — честный fallback, если в первом пусто.
+    const pool = mixActive ? (baseSlotSet.has(s.id) ? basePool : regularPool) : recipes;
+    const altPool = mixActive ? (baseSlotSet.has(s.id) ? regularPool : basePool) : null;
+
     // Свежая попытка: повтор блюда ради сытности хуже, чем свежее без неё
-    const freshPick = opts => {
-      const p = pickSuggestion(recipes, opts, [...used], now, rand);
+    const freshFrom = (list, opts) => {
+      if (!list?.length) return null;
+      const p = pickSuggestion(list, opts, [...used], now, rand);
       return p && p.relaxed !== 'repeat' ? p : null;
     };
+    const freshPick = opts => freshFrom(pool, opts);
 
     let res = null;
     let quotaCls = null;
@@ -115,10 +164,12 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
           // мясной ужин: сначала нужная сытность, потом любое свежее мясо
           res = freshPick({ ...base, protein: 'meat', mood: meatMood })
              || freshPick({ ...base, protein: 'meat' })
-             || pickSuggestion(recipes, { ...base, protein: 'meat' }, [...used], now, rand);
+             || freshFrom(altPool, { ...base, protein: 'meat' })
+             || pickSuggestion(pool, { ...base, protein: 'meat' }, [...used], now, rand);
         } else {
           res = freshPick({ ...base, protein: cls })
-             || pickSuggestion(recipes, { ...base, protein: cls }, [...used], now, rand);
+             || freshFrom(altPool, { ...base, protein: cls })
+             || pickSuggestion(pool, { ...base, protein: cls }, [...used], now, rand);
         }
         if (res) {
           quotaCls = cls;
@@ -127,7 +178,10 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
         }
       }
     }
-    if (!res) res = pickSuggestion(recipes, base, [...used], now, rand);
+    if (!res) res = freshFrom(pool, base);
+    if (!res && altPool) res = freshFrom(altPool, base);
+    if (!res) res = pickSuggestion(pool, base, [...used], now, rand);
+    if (!res && altPool) res = pickSuggestion(altPool, base, [...used], now, rand);
     if (!res) { out[s.id] = { recipeId: null, locked: false }; continue; }
 
     const r = res.recipe;
@@ -189,6 +243,8 @@ export function batchFactor(recipe, profile) {
 // Реролл одного слота: исключает рецепты, уже занятые в других слотах.
 // Класс белка текущего блюда сохраняется (мясной ужин остаётся мясным),
 // с откатом до «любого», если в классе больше нечего предложить.
+// Происхождение блюда тоже сохраняется: регулярное меняется на регулярное,
+// базовое — на базовое; пустой слот пополняется из основы недели — регулярных.
 export function rerollSlot(recipes, profile, slots, slotId, dict = null, now = Date.now(), rand = Math.random) {
   const [day, meal] = slotId.split('_');
   const usedElsewhere = Object.entries(slots)
@@ -199,8 +255,15 @@ export function rerollSlot(recipes, profile, slots, slotId, dict = null, now = D
   const maxMin = meal === 'dinner' ? (profile?.rhythm?.[day] ?? null) : null;
   const base = { meal, maxMin, exclude: profile?.exclude || [], dict };
   const cur = current ? recipes.find(r => r.id === current) : null;
-  const res = (cur ? pickSuggestion(recipes, { ...base, protein: proteinClass(cur) }, [...usedElsewhere], now, rand) : null)
-    || pickSuggestion(recipes, base, usedElsewhere, now, rand);
+
+  const regularPool = recipes.filter(isRegularRecipe);
+  const mixActive = regularPool.length > 0 && regularPool.length < recipes.length;
+  const pool = !mixActive ? recipes
+    : (cur && !isRegularRecipe(cur) ? recipes.filter(r => !isRegularRecipe(r)) : regularPool);
+
+  const res = (cur ? pickSuggestion(pool, { ...base, protein: proteinClass(cur) }, [...usedElsewhere], now, rand) : null)
+    || pickSuggestion(pool, base, [...usedElsewhere], now, rand)
+    || (mixActive ? pickSuggestion(recipes, base, usedElsewhere, now, rand) : null);
   return res ? { recipeId: res.recipe.id, locked: false } : null;
 }
 
