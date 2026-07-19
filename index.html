@@ -202,13 +202,14 @@
     .week-slot{background:var(--white);border-radius:14px;padding:10px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px var(--shadow);margin-bottom:6px;}
     .week-slot.locked{border:2px solid var(--amber);}
     .week-slot.reheat{background:var(--cream);border:1px dashed var(--warm);box-shadow:none;}
-    .ws-meal{font-size:11px;color:var(--text-soft);width:52px;flex-shrink:0;}
-    .ws-emoji{font-size:22px;flex-shrink:0;}
+    .ws-mealtag{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--amber);font-weight:700;margin-bottom:2px;}
+    .ws-emoji{font-size:24px;flex-shrink:0;}
     .ws-info{flex:1;min-width:0;cursor:pointer;}
-    .ws-title{font-size:14px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-    .ws-kcal{font-size:11px;color:var(--text-soft);}
-    .ws-empty{flex:1;font-size:13px;color:var(--text-soft);font-style:italic;}
-    .ws-btn{background:none;border:none;font-size:16px;cursor:pointer;padding:4px;flex-shrink:0;opacity:.75;}
+    .ws-title{font-size:14px;font-weight:500;color:var(--text);line-height:1.3;}
+    .ws-kcal{font-size:11px;color:var(--text-soft);margin-top:2px;}
+    .ws-empty{font-size:13px;color:var(--text-soft);font-style:italic;}
+    .ws-actions{display:grid;grid-template-columns:repeat(2,30px);gap:2px;flex-shrink:0;}
+    .ws-btn{background:none;border:none;font-size:15px;cursor:pointer;padding:3px;opacity:.7;line-height:1;}
     .ws-btn:active{transform:scale(.9);}
     .week-toolbar{display:flex;gap:8px;margin-bottom:16px;}
     .week-totals{background:var(--warm);border-radius:12px;padding:10px 14px;font-size:13px;color:var(--brown);margin-bottom:18px;}
@@ -313,7 +314,7 @@
 <!-- RECIPE DETAIL -->
 <div id="recipe-screen">
   <div class="recipe-header">
-    <button class="back-btn" onclick="goHome()">← Все рецепты</button>
+    <button class="back-btn" id="recipe-back-btn" onclick="recipeBack()">← Все рецепты</button>
     <div class="recipe-header-actions">
       <div>
         <span class="recipe-emoji-big" id="r-emoji"></span>
@@ -780,7 +781,31 @@ window.onMultiplierInput = function(raw) {
 }
 
 // ── RECIPE DETAIL ──
-function openRecipe(r) {
+// Откуда открыли рецепт — туда и вернёмся: 'home' | 'week' | 'idea'
+let recipeBackTo = 'home';
+const RECIPE_BACK_LABELS = { home: '← Все рецепты', week: '← Меню недели', idea: '← Что приготовить?' };
+
+window.recipeBack = function() {
+  window.currentRecipe = null;
+  nutritionRenderToken++;
+  document.getElementById('r-nutrition-wrap').innerHTML = '';
+  if (recipeBackTo === 'week') {
+    // план уже в памяти — возвращаемся мгновенно, без перезагрузки
+    if (currentPlan) { show('week-screen'); renderWeek(); window.scrollTo(0, 0); }
+    else openWeek();
+    return;
+  }
+  if (recipeBackTo === 'idea') { show('idea-screen'); window.scrollTo(0, 0); return; }
+  goHome();
+}
+
+function openRecipe(r, from = 'home') {
+  recipeBackTo = from;
+  document.getElementById('recipe-back-btn').textContent = RECIPE_BACK_LABELS[from] || RECIPE_BACK_LABELS.home;
+  openRecipeInner(r);
+}
+
+function openRecipeInner(r) {
   window.currentRecipe = r;
   // Reset multiplier
   currentMultiplier = 1;
@@ -977,14 +1002,14 @@ async function fillIdeaKcal(r) {
 
 window.ideaOpen = function(id) {
   const r = allRecipes.find(x => x.id === id);
-  if (r) openRecipe(r);
+  if (r) openRecipe(r, 'idea');
 }
 
 window.ideaCook = async function(id) {
   const r = allRecipes.find(x => x.id === id);
   if (!r) return;
   try { await markCooked(r); } catch (e) { console.error(e); }
-  openRecipe(r);
+  openRecipe(r, 'idea');
 }
 
 // ── УДИВИ МЕНЯ ──
@@ -1145,7 +1170,7 @@ window.surpriseSave = async function(open) {
     const r = currentSurprise.saved
       ? allRecipes.find(x => x.id === currentSurprise.savedId)
       : await saveSurpriseRecipe();
-    if (open) openRecipe(r);
+    if (open) openRecipe(r, 'idea');
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
@@ -1156,7 +1181,7 @@ window.surpriseCook = async function() {
       ? allRecipes.find(x => x.id === currentSurprise.savedId)
       : await saveSurpriseRecipe();
     await markCooked(r);
-    openRecipe(r);
+    openRecipe(r, 'idea');
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
@@ -1230,7 +1255,7 @@ window.weekRemove = async function(slotId) {
 
 window.weekOpen = function(rid) {
   const r = allRecipes.find(x => x.id === rid);
-  if (r) openRecipe(r);
+  if (r) openRecipe(r, 'week');
 }
 
 window.weekToggleCheck = async function(key, el) {
@@ -1259,10 +1284,15 @@ function renderSlot(s, byId) {
   const slot = currentPlan.slots?.[s.id];
   const r = slot?.recipeId ? byId[slot.recipeId] : null;
   if (!r) {
-    return `<div class="week-slot"><span class="ws-meal">${MEAL_LABELS[s.meal]}</span>
-      <span class="ws-empty">пусто</span>
-      <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Подобрать">🎲</button>
-      <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button></div>`;
+    return `<div class="week-slot">
+      <div class="ws-info">
+        <div class="ws-mealtag">${MEAL_LABELS[s.meal]}</div>
+        <div class="ws-empty">пусто</div>
+      </div>
+      <div class="ws-actions">
+        <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Подобрать">🎲</button>
+        <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button>
+      </div></div>`;
   }
   const { perServing, totals, hasData } = computeRecipeNutrition(r, ingredientDict);
   const kcal = hasData
@@ -1276,16 +1306,18 @@ function renderSlot(s, byId) {
     subLine = `♨ разогрев — готовили вчера${kcal ? ' · ' + kcal : ''}`;
   }
   return `<div class="week-slot${slot.locked ? ' locked' : ''}${slot.kind === 'reheat' ? ' reheat' : ''}">
-    <span class="ws-meal">${MEAL_LABELS[s.meal]}</span>
     <span class="ws-emoji">${slot.kind === 'reheat' ? '♨' : escHtml(r.emoji || '🍽️')}</span>
     <div class="ws-info" onclick="weekOpen('${escHtml(r.id)}')">
+      <div class="ws-mealtag">${MEAL_LABELS[s.meal]}</div>
       <div class="ws-title">${escHtml(r.title)}</div>
       ${subLine ? `<div class="ws-kcal">${subLine}</div>` : ''}
     </div>
-    <button class="ws-btn" onclick="weekLock('${s.id}')" title="Закрепить">${slot.locked ? '🔒' : '🔓'}</button>
-    <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Другой вариант">🎲</button>
-    <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button>
-    <button class="ws-btn" onclick="weekRemove('${s.id}')" title="Убрать">✖</button>
+    <div class="ws-actions">
+      <button class="ws-btn" onclick="weekLock('${s.id}')" title="Закрепить">${slot.locked ? '🔒' : '🔓'}</button>
+      <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Другой вариант">🎲</button>
+      <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button>
+      <button class="ws-btn" onclick="weekRemove('${s.id}')" title="Убрать">✖</button>
+    </div>
   </div>`;
 }
 
@@ -1610,7 +1642,7 @@ window.saveRecipe = async function() {
     allRecipes.sort((a,b)=>a.title.localeCompare(b.title,'ru'));
     btn.disabled = false; btn.textContent = '💾 Сохранить рецепт';
     closeEditor();
-    openRecipe(recipe);
+    openRecipe(recipe, recipeBackTo);
   } catch(e) {
     btn.disabled = false; btn.textContent = '💾 Сохранить рецепт';
     alert('Ошибка: ' + e.message);
