@@ -28,6 +28,8 @@ const DEFAULT_PROFILE = {
   // бюджет времени на ужин по дням (мин); null = не ограничено
   rhythm: { mon: 45, tue: 45, wed: 45, thu: 45, fri: 60, sat: null, sun: null },
   excludeText: '', // продукты-исключения, через запятую
+  regularDishesText: '', // привычные блюда «из головы» — сырьё для парсера регулярных
+  hideRegular: false,    // скрывать регулярные рецепты из общего списка
 };
 
 export async function loadHousehold() {

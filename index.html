@@ -302,6 +302,7 @@
     <button class="tab" onclick="filterCards('baking',event)">🧁 Выпечка</button>
     <button class="tab" onclick="filterCards('dessert',event)">🍮 Десерты</button>
     <button class="tab" onclick="filterCards('icecream',event)">🍦 Мороженое</button>
+    <button class="tab" onclick="filterCards('regular',event)">🔁 Регулярные</button>
   </div>
   <div class="cards-grid stagger" id="cards-grid"></div>
   <div class="fab-group">
@@ -449,6 +450,19 @@
     <label class="field-label" style="margin-top:14px">Исключить продукты (через запятую)</label>
     <textarea class="field-input" id="f-exclude" placeholder="грибы, орехи…"></textarea>
 
+    <label class="field-label">🔁 Привычные блюда (готовим регулярно, из головы)</label>
+    <textarea class="field-input" id="f-regular" style="min-height:110px" placeholder="Опиши свободным текстом: по будням часто гречка с курицей и тушёные овощи, на завтрак омлет или каша, по выходным блины…"></textarea>
+    <div class="quota-row" style="align-items:center">
+      <label>Рецептов <input type="number" min="1" max="15" id="f-regular-count" placeholder="5–10"/></label>
+      <button class="idea-act secondary" style="flex:1" id="regular-parse-btn" onclick="parseRegularDishes()" type="button">✨ Создать рецепты</button>
+    </div>
+    <div class="mood-caption" id="regular-status"></div>
+    <div class="mood-caption">из описания получатся простые рецепты с тэгом «Регулярные» — они станут основой меню недели, а блюда из основной базы будут попадать в план по 2–4 в неделю</div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0 18px;cursor:pointer">
+      <input type="checkbox" id="f-hide-regular" style="width:18px;height:18px;accent-color:var(--amber)"/>
+      Скрывать регулярные из общего списка рецептов
+    </label>
+
     <button class="save-btn" onclick="saveFamily()">💾 Сохранить</button>
   </div>
 </div>
@@ -497,7 +511,8 @@
 import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
-import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition } from './js/nutrition.js';
+import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT } from './js/nutrition.js';
+import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular } from './js/regular.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan } from './js/store.js';
 import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor } from './js/planner.js';
@@ -526,9 +541,11 @@ function householdExclude() {
 }
 
 async function loadRecipes() {
+  // профиль нужен сразу: hideRegular влияет на первый рендер списка
   const [snap, states] = await Promise.all([
     getDocs(collection(db, 'recipes')),
     loadRecipeStates(),
+    ensureHousehold(),
   ]);
   // История готовки семьи накладывается поверх общих рецептов
   allRecipes = overlayStates(snap.docs.map(d => ({id: d.id, ...d.data()})), states);
@@ -544,7 +561,13 @@ loadRecipes().catch(e => {
 // ── RENDER CARDS ──
 function getFiltered() {
   let list = allRecipes;
-  if (currentFilter !== 'all') list = list.filter(r => (r.tags||[]).includes(currentFilter));
+  if (currentFilter === 'regular') {
+    list = list.filter(isRegularRecipe);
+  } else {
+    // скрытые регулярные видны только на своём табе — ни в «Все», ни в поиске
+    if (household?.hideRegular) list = list.filter(r => !isRegularRecipe(r));
+    if (currentFilter !== 'all') list = list.filter(r => (r.tags||[]).includes(currentFilter));
+  }
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
     list = list.filter(r => {
@@ -1465,6 +1488,12 @@ window.openFamily = async function() {
   document.getElementById('f-lunch').checked = !!household.planMeals?.includes('lunch');
   document.getElementById('f-dinner').checked = household.planMeals?.includes('dinner') ?? true;
   document.getElementById('f-exclude').value = household.excludeText || '';
+  document.getElementById('f-regular').value = household.regularDishesText || '';
+  document.getElementById('f-regular-count').value = '';
+  document.getElementById('f-hide-regular').checked = !!household.hideRegular;
+  const regN = allRecipes.filter(isRegularRecipe).length;
+  document.getElementById('regular-status').textContent =
+    regN ? `сейчас в базе ${regN} регулярных рецептов` : '';
   document.getElementById('f-q-meat').value = household.dinnerQuota?.meat || '';
   document.getElementById('f-q-fish').value = household.dinnerQuota?.fish || '';
   document.getElementById('f-q-veg').value = household.dinnerQuota?.veg || '';
@@ -1499,12 +1528,54 @@ window.saveFamily = async function() {
     planMeals: planMeals.length ? planMeals : ['dinner'],
     rhythm,
     excludeText: document.getElementById('f-exclude').value.trim(),
+    regularDishesText: document.getElementById('f-regular').value.trim(),
+    hideRegular: document.getElementById('f-hide-regular').checked,
     dinnerQuota: { meat: qv('f-q-meat'), fish: qv('f-q-fish'), veg: qv('f-q-veg') },
   };
   try {
     await saveHousehold(household);
     openWeek();
   } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+// ── ПАРСЕР РЕГУЛЯРНЫХ БЛЮД ──
+// Описание привычной еды семьи → GPT → примитивные рецепты с тэгом
+// «Регулярные». Id стабильные (reg-<название>), повторный разбор
+// перезаписывает прежние версии, а не создаёт дубликаты.
+window.parseRegularDishes = async function() {
+  const text = document.getElementById('f-regular').value.trim();
+  const status = document.getElementById('regular-status');
+  if (!text) { status.textContent = 'Сначала опиши привычные блюда семьи'; return; }
+  let apiKey = getOpenAIKey();
+  if (!apiKey) {
+    apiKey = prompt('Для разбора описания нужен OpenAI API Key (сохранится в браузере):');
+    if (!apiKey) return;
+    setOpenAIKey(apiKey);
+  }
+  const count = clampRegularCount(document.getElementById('f-regular-count').value);
+  const btn = document.getElementById('regular-parse-btn');
+  btn.disabled = true;
+  status.textContent = '⏳ Разбираю описание на рецепты… (обычно 10–20 секунд)';
+  try {
+    // текст — часть профиля семьи, сохраняем его сразу
+    household.regularDishesText = text;
+    saveHousehold(household).catch(e => console.error('saveHousehold:', e));
+
+    const parsed = await callJsonGPT(REGULAR_PROMPT, buildRegularUserMsg(text, count), apiKey, 8000);
+    const created = normalizeParsedRegular(parsed, ownerId());
+    if (!created.length) throw new Error('не удалось выделить блюда из описания');
+    for (const r of created) {
+      await setDoc(doc(db, 'recipes', r.id), r);
+      const idx = allRecipes.findIndex(x => x.id === r.id);
+      if (idx >= 0) allRecipes[idx] = r; else allRecipes.push(r);
+    }
+    allRecipes.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'ru'));
+    status.textContent = `✔ Готово: ${created.length} рецептов — ${created.map(r => r.title).join(', ')}`;
+  } catch (e) {
+    console.error('Regular parse failed:', e);
+    status.textContent = '😔 Не получилось: ' + e.message;
+  }
+  btn.disabled = false;
 }
 
 window.deleteRecipe = async function() {

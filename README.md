@@ -24,6 +24,7 @@
 | `nutrition-core.js` | **Чистая**: граммы из количеств (`amountToGrams`, `gramsForEntry`), справочник с синонимами (`buildDict`/`dictLookup`), КБЖУ рецепта и на порцию (`computeRecipeNutrition`), `expandIngredients` (разделители «— ТЕСТО: Мука»), generic `callJsonGPT` |
 | `nutrition.js` | Firestore-обёртки над core (загрузка справочника, документы); реэкспортирует core |
 | `suggest.js` | **Чистая**: подбор блюда — фильтры (приём/время/сытность/белок/продукты/исключения), `effectiveHeaviness` (каскад правил сытности), `isBatchDish`, `proteinClass`, скоринг по давности + взвешенный случайный выбор, честные ослабления, similarity-проверка для «Удиви меня» |
+| `regular.js` | **Чистая**: «Регулярные» блюда — промпт и нормализация GPT-разбора свободного описания привычной еды семьи в примитивные рецепты (`normalizeParsedRegular`), стабильные id `reg-<название>` (повторный разбор перезаписывает, а не дублирует), `isRegularRecipe` |
 | `planner.js` | **Чистая**: недельная сетка (`buildSlots`, завтраки/обеды/ужины), `generateWeek` (квоты, чередование, батч-связки), `rerollSlot`, список покупок (`aggregateShopping` + `canonicalShoppingKey`), `weekTotals`, `batchFactor` |
 | `store.js` | Пер-семейные данные до auth: `households/default` (профиль), `recipeState` (история готовки), `plans`, `ownerId`/`canEditRecipe` |
 
@@ -37,7 +38,7 @@
   - Легаси-поля `timesCooked`/`lastCookedAt` на рецепте — только fallback, новые записи идут в recipeState.
 - **`nutrition/{canonicalName}`** — справочник ингредиентов (глобальный, факты):
   `{ kcal, protein, fat, carbs, unitG?, aliases?[], category?, isPantryStaple?, perishability?, storage? }` на 100 г.
-- **`households/default`** — профиль семьи: `{ name, members[{name,coeff}], planMeals[breakfast|lunch|dinner], rhythm{mon..sun: мин|null}, excludeText, dinnerQuota{meat,fish,veg} }`.
+- **`households/default`** — профиль семьи: `{ name, members[{name,coeff}], planMeals[breakfast|lunch|dinner], rhythm{mon..sun: мин|null}, excludeText, dinnerQuota{meat,fish,veg}, regularDishesText, hideRegular }`.
 - **`households/default/recipeState/{recipeId}`** — история готовки семьи: `{ timesCooked, lastCookedAt }` (оверлей поверх рецептов, ленивая миграция).
 - **`households/default/plans/{weekStartISO}`** — план недели: `{ weekStart, slots{slotId: {recipeId, locked, kind?: batch|reheat, linkedTo?}}, checked{} }`; slotId = `mon_dinner` и т.п., weekStart = понедельник `YYYY-MM-DD`.
 
@@ -59,12 +60,14 @@
 
 **Квоты ужинов:** dinnerQuota — сколько мясных/рыбных/вегетарианских ужинов в неделю; классы не идут подряд (кроме разогрева), свежие мясные чередуются средний↔сытный; разогрев батча в ужин расходует квоту, при исчерпании — не ставится (порции в заморозку).
 
+**Регулярные блюда — основа недели:** в 👪 Семья есть текстовое окно «привычные блюда» — семья свободным текстом описывает еду, которую готовит из головы без рецептов. Кнопка «✨ Создать рецепты» через GPT превращает описание в 5–10 (или сколько указано, 1–15) примитивных рецептов с тэгом «🔁 Регулярные» (id стабильные `reg-<название>` — повторный разбор перезаписывает, а не дублирует). Чекбокс `hideRegular` скрывает их из общего списка (виден только таб «🔁 Регулярные»). В планировщике недели регулярные — основа: блюда из основной базы попадают в план дозированно, 2–4 в неделю (`baseWeekTarget` = clamp(слоты/3, 2..4)), равномерно распределённые по свободным слотам; залоченные базовые расходуют этот лимит; если в нужном пуле пусто — честный fallback в другой пул, слоты не пустуют. Реролл сохраняет происхождение блюда (регулярное → регулярное, базовое → базовое), пустой слот пополняется из регулярных.
+
 **Список покупок:** канонизация ключа (alias справочника → «или…» → прилагательные-модификаторы → группы яйца/яйцо/яиц), штучные товары (есть unitG) покупаются штуками с округлением вверх, pantry staples исключаются, группировка по категориям, чекбоксы в плане.
 
 ## Тесты и запуск
 
 ```bash
-npm test     # node --test, 77 тестов, без зависимостей
+npm test     # node --test, 90 тестов, без зависимостей
 npx serve .  # локально; file:// не работает (ES-модули)
 ```
 

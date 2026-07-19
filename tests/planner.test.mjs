@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   weekStartISO, buildSlots, generateWeek, rerollSlot,
-  aggregateShopping, shoppingAmountLabel, weekTotals, DAYS
+  aggregateShopping, shoppingAmountLabel, weekTotals, DAYS,
+  baseWeekTarget, pickBaseSlotIds,
 } from '../js/planner.js';
 import { filterCandidates } from '../js/suggest.js';
 import { buildDict } from '../js/nutrition-core.js';
@@ -356,4 +357,82 @@ test('rerollSlot: сохраняет класс белка текущего бл
   const slots = { mon_dinner: { recipeId: 'salmon' } };
   const next = rerollSlot(QUOTA_CATALOG, profile, slots, 'mon_dinner', null, NOW, () => 0);
   assert.equal(next.recipeId, 'cod', 'рыбный ужин остаётся рыбным');
+});
+
+// ── Регулярные блюда как основа недели ──
+
+const MIXED_CATALOG = [
+  ...Array.from({ length: 6 }, (_, i) => ({
+    id: `base${i}`, title: `Базовое ${i}`, tags: ['veggie'], meta: '~30 мин',
+    ingredients: [{ n: `Овощ${i}`, a: '100 г' }],
+  })),
+  ...Array.from({ length: 6 }, (_, i) => ({
+    id: `reg${i}`, title: `Привычное ${i}`, tags: ['veggie', 'regular'], meta: '~20 мин',
+    ingredients: [{ n: `Крупа${i}`, a: '100 г' }],
+  })),
+];
+
+test('baseWeekTarget: 2–4 базовых на неделю', () => {
+  assert.equal(baseWeekTarget(7), 2);   // только ужины
+  assert.equal(baseWeekTarget(14), 4);  // обеды + ужины (round(14/3)=5 → максимум 4)
+  assert.equal(baseWeekTarget(21), 4);  // все приёмы
+  assert.equal(baseWeekTarget(1), 1);   // не больше, чем слотов
+  assert.equal(baseWeekTarget(0), 0);
+});
+
+test('pickBaseSlotIds: равномерно по свободным слотам', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+  assert.deepEqual([...pickBaseSlotIds(ids, 2)], ['b', 'f']);
+  assert.deepEqual([...pickBaseSlotIds(ids, 0)], []);
+  assert.equal(pickBaseSlotIds(['a'], 5).size, 1, 'не больше, чем слотов');
+});
+
+test('generateWeek: регулярные — основа, базовых ровно по лимиту', () => {
+  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const slots = generateWeek(MIXED_CATALOG, profile, {}, null, NOW, () => 0);
+  const ids = Object.values(slots).map(s => s.recipeId);
+  assert.ok(ids.every(Boolean), 'все слоты заполнены');
+  const baseCount = ids.filter(id => id.startsWith('base')).length;
+  assert.equal(baseCount, 2, 'на 7 ужинов — 2 базовых блюда');
+  assert.equal(ids.filter(id => id.startsWith('reg')).length, 5, 'остальные — регулярные');
+});
+
+test('generateWeek: залоченные базовые расходуют базовый лимит', () => {
+  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const existing = {
+    mon_dinner: { recipeId: 'base0', locked: true },
+    thu_dinner: { recipeId: 'base1', locked: true },
+  };
+  const slots = generateWeek(MIXED_CATALOG, profile, existing, null, NOW, () => 0);
+  const generated = Object.entries(slots)
+    .filter(([id]) => id !== 'mon_dinner' && id !== 'thu_dinner')
+    .map(([, s]) => s.recipeId);
+  assert.ok(generated.every(id => id.startsWith('reg')),
+    'лимит выбран локами — генерация добавляет только регулярные: ' + generated.join(','));
+});
+
+test('generateWeek: без регулярных в каталоге поведение прежнее', () => {
+  const baseOnly = MIXED_CATALOG.filter(r => r.id.startsWith('base'));
+  const slots = generateWeek(baseOnly, { planMeals: ['dinner'], rhythm: {} }, {}, null, NOW, () => 0);
+  assert.ok(Object.values(slots).every(s => s.recipeId), 'неделя строится целиком из базы');
+});
+
+test('generateWeek: мало регулярных — честный fallback в базу, слоты не пустуют', () => {
+  const catalog = [...MIXED_CATALOG.filter(r => r.id.startsWith('base')), MIXED_CATALOG[6]]; // 6 базовых + 1 регулярное
+  const slots = generateWeek(catalog, { planMeals: ['dinner'], rhythm: {} }, {}, null, NOW, () => 0);
+  const ids = Object.values(slots).map(s => s.recipeId);
+  assert.ok(ids.every(Boolean), 'все слоты заполнены');
+  assert.ok(ids.includes('reg0'), 'единственное регулярное блюдо использовано');
+});
+
+test('rerollSlot: происхождение блюда сохраняется', () => {
+  const profile = { planMeals: ['dinner'], rhythm: {} };
+  const next = rerollSlot(MIXED_CATALOG, profile,
+    { mon_dinner: { recipeId: 'reg0' } }, 'mon_dinner', null, NOW, () => 0);
+  assert.ok(next.recipeId.startsWith('reg'), 'регулярное меняется на регулярное');
+  const nextBase = rerollSlot(MIXED_CATALOG, profile,
+    { mon_dinner: { recipeId: 'base0' } }, 'mon_dinner', null, NOW, () => 0);
+  assert.ok(nextBase.recipeId.startsWith('base'), 'базовое меняется на базовое');
+  const nextEmpty = rerollSlot(MIXED_CATALOG, profile, {}, 'mon_dinner', null, NOW, () => 0);
+  assert.ok(nextEmpty.recipeId.startsWith('reg'), 'пустой слот пополняется из регулярных');
 });
