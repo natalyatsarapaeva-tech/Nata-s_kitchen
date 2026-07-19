@@ -79,7 +79,9 @@ export async function markCookedState(recipe) {
 
 export async function loadPlan(weekStart) {
   const snap = await getDoc(doc(db, 'households', HOUSEHOLD_ID, 'plans', weekStart));
-  return snap.exists() ? snap.data() : { weekStart, slots: {}, checked: {} };
+  const plan = snap.exists() ? snap.data() : { weekStart, slots: {}, checked: {} };
+  plan.notes = plan.notes || {}; // заметки приёмов пищи: {slotId: текст}
+  return plan;
 }
 
 export async function savePlan(plan) {

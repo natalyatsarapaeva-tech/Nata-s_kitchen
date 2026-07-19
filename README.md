@@ -40,7 +40,7 @@
   `{ kcal, protein, fat, carbs, unitG?, aliases?[], category?, isPantryStaple?, perishability?, storage? }` на 100 г.
 - **`households/default`** — профиль семьи: `{ name, members[{name,coeff}], planMeals[breakfast|lunch|dinner], rhythm{mon..sun: мин|null}, excludeText, dinnerQuota{meat,fish,veg}, regularDishesText, hideRegular }`.
 - **`households/default/recipeState/{recipeId}`** — история готовки семьи: `{ timesCooked, lastCookedAt }` (оверлей поверх рецептов, ленивая миграция).
-- **`households/default/plans/{weekStartISO}`** — план недели: `{ weekStart, slots{slotId: {recipeId, locked, kind?: batch|reheat, linkedTo?}}, checked{} }`; slotId = `mon_dinner` и т.п., weekStart = понедельник `YYYY-MM-DD`.
+- **`households/default/plans/{weekStartISO}`** — план недели: `{ weekStart, slots{slotId: {recipeId, locked, kind?: batch|reheat, linkedTo?}}, checked{}, notes{slotId: текст} }`; slotId = `mon_dinner` и т.п., weekStart = понедельник `YYYY-MM-DD`. `notes` — свободные заметки к приёму пищи («＋» на слоте: гарнир, закуска, особое требование члена семьи), живут отдельно от слота и переживают реролл/генерацию. Кнопки замка в UI нет: `locked` ставится только ручным выбором из шторки и защищает слот от перегенерации.
 
 ## Ключевые бизнес-правила (заданы пользователем, зашиты детерминированно)
 

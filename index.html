@@ -211,6 +211,9 @@
     .ws-actions{display:grid;grid-template-columns:repeat(2,30px);gap:2px;flex-shrink:0;}
     .ws-btn{background:none;border:none;font-size:15px;cursor:pointer;padding:3px;opacity:.7;line-height:1;}
     .ws-btn:active{transform:scale(.9);}
+    .ws-note-row{display:flex;align-items:center;gap:7px;margin:-2px 2px 8px;font-size:13px;}
+    .ws-note-input{flex:1;padding:8px 12px;border-radius:10px;border:2px dashed var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:13px;color:var(--text);outline:none;}
+    .ws-note-input:focus{border-color:var(--amber);}
     .week-toolbar{display:flex;gap:8px;margin-bottom:16px;}
     .week-totals{background:var(--warm);border-radius:12px;padding:10px 14px;font-size:13px;color:var(--brown);margin-bottom:18px;}
     .shop-cat{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--amber);font-weight:700;margin:12px 0 4px;}
@@ -1245,6 +1248,7 @@ window.clearPlanWeek = async function() {
   if (!confirm('Очистить план недели?')) return;
   currentPlan.slots = {};
   currentPlan.checked = {};
+  currentPlan.notes = {};
   await persistPlan();
   renderWeek();
 }
@@ -1261,12 +1265,26 @@ window.weekReroll = async function(slotId) {
   renderWeek();
 }
 
-window.weekLock = async function(slotId) {
-  const s = currentPlan.slots?.[slotId];
-  if (!s?.recipeId) return;
-  s.locked = !s.locked;
+// ── Заметки к приёму пищи ──
+// «＋» открывает поле простого текста под слотом: гарнир, дополнительная
+// закуска, особое требование для члена семьи. Пустая заметка при потере
+// фокуса удаляется.
+window.weekAddNote = function(slotId) {
+  currentPlan.notes = currentPlan.notes || {};
+  if (currentPlan.notes[slotId] == null) {
+    currentPlan.notes[slotId] = '';
+    renderWeek();
+  }
+  document.getElementById('note-' + slotId)?.focus();
+}
+
+window.weekNoteChange = async function(slotId, val) {
+  currentPlan.notes = currentPlan.notes || {};
+  const v = val.trim();
+  if (v) currentPlan.notes[slotId] = v;
+  else delete currentPlan.notes[slotId];
   await persistPlan();
-  renderWeek();
+  if (!v) renderWeek(); // опустевшее поле убираем
 }
 
 window.weekRemove = async function(slotId) {
@@ -1303,6 +1321,16 @@ function renderWeek() {
   renderShopping(byId);
 }
 
+// Заметка приёма пищи: гарнир, закуска, «для Мишы без соуса» и т.п.
+// Живёт в plan.notes[slotId] отдельно от слота — переживает реролл и генерацию.
+function renderSlotNote(slotId) {
+  const note = currentPlan.notes?.[slotId];
+  if (note == null) return '';
+  return `<div class="ws-note-row"><span>📝</span><input class="ws-note-input" id="note-${slotId}"
+    value="${escHtml(note)}" placeholder="Гарнир, заметка, особое блюдо…"
+    onchange="weekNoteChange('${slotId}', this.value)"/></div>`;
+}
+
 function renderSlot(s, byId) {
   const slot = currentPlan.slots?.[s.id];
   const r = slot?.recipeId ? byId[slot.recipeId] : null;
@@ -1315,7 +1343,8 @@ function renderSlot(s, byId) {
       <div class="ws-actions">
         <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Подобрать">🎲</button>
         <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button>
-      </div></div>`;
+        <button class="ws-btn" onclick="weekAddNote('${s.id}')" title="Добавить заметку">＋</button>
+      </div></div>` + renderSlotNote(s.id);
   }
   const { perServing, totals, hasData } = computeRecipeNutrition(r, ingredientDict);
   const kcal = hasData
@@ -1336,12 +1365,12 @@ function renderSlot(s, byId) {
       ${subLine ? `<div class="ws-kcal">${subLine}</div>` : ''}
     </div>
     <div class="ws-actions">
-      <button class="ws-btn" onclick="weekLock('${s.id}')" title="Закрепить">${slot.locked ? '🔒' : '🔓'}</button>
+      <button class="ws-btn" onclick="weekAddNote('${s.id}')" title="Добавить заметку">＋</button>
       <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Другой вариант">🎲</button>
       <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button>
       <button class="ws-btn" onclick="weekRemove('${s.id}')" title="Убрать">✖</button>
     </div>
-  </div>`;
+  </div>` + renderSlotNote(s.id);
 }
 
 function renderWeekTotals(byId) {
