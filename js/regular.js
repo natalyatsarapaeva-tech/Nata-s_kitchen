@@ -18,10 +18,14 @@ const CATEGORY_IDS = TAGS.map(t => t.id)
   .filter(id => id !== REGULAR_TAG && id !== 'dessert' && id !== 'icecream');
 
 // Стабильный id без метки времени: повторный разбор того же описания
-// перезаписывает прежние рецепты, а не плодит дубликаты.
-export function regularRecipeId(title) {
-  return 'reg-' + String(title || '').toLowerCase()
+// перезаписывает прежние рецепты, а не плодит дубликаты. Книга рецептов
+// общая, поэтому id включает семью — «Омлет» двух семей не конфликтует;
+// легаси-семья 'default' сохраняет прежний формат reg-<название>.
+export function regularRecipeId(title, householdId = null) {
+  const slug = String(title || '').toLowerCase()
     .replace(/[^а-яёa-z0-9]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const prefix = householdId && householdId !== 'default' ? `reg-${householdId}-` : 'reg-';
+  return slug ? prefix + slug : '';
 }
 
 // Сколько рецептов просил пользователь: целое 1–15 или null
@@ -60,10 +64,19 @@ export function buildRegularUserMsg(text, count = null) {
   return `Описание привычных блюд семьи:\n"""\n${text}\n"""\n${ask}`;
 }
 
+// Регулярные блюда пер-семейные: household хранится на рецепте, чужие
+// регулярные скрываются из каталога целиком (это примитивные заготовки
+// конкретной семьи, а не общая книга). Легаси без поля — семьи 'default'.
+export function filterForeignRegular(recipes, hid) {
+  const mine = hid || 'default';
+  return (recipes || []).filter(r =>
+    !isRegularRecipe(r) || (r.householdId || 'default') === mine);
+}
+
 // Превращает ответ GPT в валидные документы рецептов: тэг «Регулярные»
 // добавляется всегда, категория — только из известного списка, строки
 // ингредиентов чистятся как при импорте.
-export function normalizeParsedRegular(parsed, owner = null) {
+export function normalizeParsedRegular(parsed, owner = null, householdId = null) {
   const list = Array.isArray(parsed?.recipes) ? parsed.recipes : [];
   return list
     .filter(p => p && String(p.title || '').trim())
@@ -72,7 +85,7 @@ export function normalizeParsedRegular(parsed, owner = null) {
       const servings = parseInt(p.servings, 10);
       const category = CATEGORY_IDS.includes(p.category) ? [p.category] : [];
       return {
-        id: regularRecipeId(title),
+        id: regularRecipeId(title, householdId),
         emoji: p.emoji || '🍳',
         title,
         meta: p.meta || '',
@@ -85,7 +98,8 @@ export function normalizeParsedRegular(parsed, owner = null) {
         ...(p.attrs && typeof p.attrs === 'object' ? { attrs: p.attrs } : {}),
         source: 'regular',
         ...(owner ? { createdBy: owner } : {}),
+        ...(householdId ? { householdId } : {}),
       };
     })
-    .filter(r => r.id !== 'reg-' && r.ingredients.length);
+    .filter(r => r.id && r.ingredients.length);
 }

@@ -18,7 +18,8 @@
 
 | Модуль | Содержимое |
 |---|---|
-| `firebase.js` | Инициализация Firebase + реэкспорт функций Firestore |
+| `firebase.js` | Инициализация Firebase (Firestore + Auth) + реэкспорты; `authReady` — промис восстановления сессии |
+| `household-core.js` | **Чистая**: мульти-семейность — `canEditRecipeAs` (автор/легаси-права), коды приглашений (`makeJoinCode`/`normalizeJoinCode`), id семей, `overlayStates` (легаси-история только легаси-семье) |
 | `constants.js` | Категории (TAGS) и эмодзи |
 | `utils.js` | escHtml, normalizeIngName, slugify, разбор чисел/дробей (юникод ½⅓¾, «по …», «1,5»), scaleAmount, parseJsonLoose, cleanStructuredEntry, ключ OpenAI в localStorage |
 | `nutrition-core.js` | **Чистая**: граммы из количеств (`amountToGrams`, `gramsForEntry`), справочник с синонимами (`buildDict`/`dictLookup`), КБЖУ рецепта и на порцию (`computeRecipeNutrition`), `expandIngredients` (разделители «— ТЕСТО: Мука»), generic `callJsonGPT` |
@@ -26,21 +27,25 @@
 | `suggest.js` | **Чистая**: подбор блюда — фильтры (приём/время/сытность/белок/продукты/исключения), `effectiveHeaviness` (каскад правил сытности), `isBatchDish`, `proteinClass`, скоринг по давности + взвешенный случайный выбор, честные ослабления, similarity-проверка для «Удиви меня» |
 | `regular.js` | **Чистая**: «Регулярные» блюда — промпт и нормализация GPT-разбора свободного описания привычной еды семьи в примитивные рецепты (`normalizeParsedRegular`), стабильные id `reg-<название>` (повторный разбор перезаписывает, а не дублирует), `isRegularRecipe` |
 | `planner.js` | **Чистая**: недельная сетка (`buildSlots`, завтраки/обеды/ужины), `generateWeek` (квоты, чередование, батч-связки), `rerollSlot`, список покупок (`aggregateShopping` + `canonicalShoppingKey`), `weekTotals`, `batchFactor` |
-| `store.js` | Пер-семейные данные до auth: `households/default` (профиль), `recipeState` (история готовки), `plans`, `ownerId`/`canEditRecipe` |
+| `store.js` | Auth-сессия (Google / email+пароль) и пер-семейные данные: `users/{uid}` → семья, онбординг (создать семью / войти по коду / забрать легаси-`default`), профиль, `recipeState`, `plans` |
 
 ## Данные (Firestore, проект `natas-kitchen`)
 
-- **`recipes/{slug}`** — общая книга рецептов (при auth станет шариться между семьями):
+Мульти-семейная модель (Фаза 5): пользователи входят через Google или email+пароль; `users/{uid}.householdId` привязывает аккаунт к семье. Семей может быть несколько (кейс владельца: она + сестра + родители), книга рецептов — одна общая. Онбординг нового пользователя: создать семью (генерируется 6-значный `joinCode`), присоединиться по коду или — для владельца — забрать легаси-семью `default` со всей историей (`claimLegacyHousehold`, доступно пока `ownerUid` не установлен).
+
+- **`users/{uid}`** — маппинг пользователь → семья: `{ householdId, email, name }`.
+- **`recipes/{slug}`** — общая книга рецептов (одна на все семьи):
   `{ id, emoji, title, meta, yield, servings?, note, tags[], ingredients[], steps[], attrs?, createdBy?, source?, sourceUrl?, needsReview?[] }`
   - Ингредиент: `{ n, a }` — исходный текст (не разрушается) + после миграции `qty`, `unit` (`g|ml|pcs|tbsp|tsp|pinch`), `ing` (канонический ключ), `opt`.
   - `attrs` — планировщик: `{ mealType[], mainProtein, cuisine, activeMin, totalMin, heaviness, spiciness, dietFlags[], kidFriendly }`.
-  - `createdBy` — автор («default» до auth); **править/удалять может только автор**, легаси без поля = свои.
+  - `createdBy` — uid автора («default» — легаси до auth); **править/удалять может только автор**; легаси-рецепты — члены семьи `default`.
+  - Регулярные рецепты несут `householdId` и **видны только своей семье** (чужие заготовки — шум); id пер-семейные `reg-<hid>-<название>`, легаси-семья сохраняет `reg-<название>`.
   - Легаси-поля `timesCooked`/`lastCookedAt` на рецепте — только fallback, новые записи идут в recipeState.
 - **`nutrition/{canonicalName}`** — справочник ингредиентов (глобальный, факты):
   `{ kcal, protein, fat, carbs, unitG?, aliases?[], category?, isPantryStaple?, perishability?, storage? }` на 100 г.
-- **`households/default`** — профиль семьи: `{ name, members[{name,coeff}], planMeals[breakfast|lunch|dinner], rhythm{mon..sun: мин|null}, excludeText, dinnerQuota{meat,fish,veg}, regularDishesText, hideRegular, weekendFull }`. `planMeals` задаёт будни; при `weekendFull` (по умолчанию true) суббота и воскресенье планируют все три приёма.
-- **`households/default/recipeState/{recipeId}`** — история готовки семьи: `{ timesCooked, lastCookedAt }` (оверлей поверх рецептов, ленивая миграция).
-- **`households/default/plans/{weekStartISO}`** — план недели: `{ weekStart, slots{slotId: {recipeId, locked, kind?: batch|reheat, linkedTo?}}, checked{}, notes{slotId: текст} }`; slotId = `mon_dinner` и т.п., weekStart = понедельник `YYYY-MM-DD`. `notes` — свободные заметки к приёму пищи («＋» на слоте: гарнир, закуска, особое требование члена семьи), живут отдельно от слота и переживают реролл/генерацию. Кнопки замка в UI нет: `locked` ставится только ручным выбором из шторки и защищает слот от перегенерации.
+- **`households/{hid}`** — профиль семьи: `{ name, members[{name,coeff}], planMeals[breakfast|lunch|dinner], rhythm{mon..sun: мин|null}, excludeText, dinnerQuota{meat,fish,veg}, regularDishesText, hideRegular, weekendFull, ownerUid, joinCode }`. `planMeals` задаёт будни; при `weekendFull` (по умолчанию true) суббота и воскресенье планируют все три приёма. `joinCode` показан в 👪 Семья — по нему присоединяются члены семьи.
+- **`households/{hid}/recipeState/{recipeId}`** — история готовки семьи: `{ timesCooked, lastCookedAt }` (оверлей поверх рецептов; легаси-поля на самом рецепте — fallback только для семьи `default`).
+- **`households/{hid}/plans/{weekStartISO}`** — план недели: `{ weekStart, slots{slotId: {recipeId, locked, kind?: batch|reheat, linkedTo?}}, checked{}, notes{slotId: текст} }`; slotId = `mon_dinner` и т.п., weekStart = понедельник `YYYY-MM-DD`. `notes` — свободные заметки к приёму пищи («＋» на слоте: гарнир, закуска, особое требование члена семьи), живут отдельно от слота и переживают реролл/генерацию. Кнопки замка в UI нет: `locked` ставится только ручным выбором из шторки и защищает слот от перегенерации.
 
 ## Ключевые бизнес-правила (заданы пользователем, зашиты детерминированно)
 
@@ -67,7 +72,7 @@
 ## Тесты и запуск
 
 ```bash
-npm test     # node --test, 91 тест, без зависимостей
+npm test     # node --test, 99 тестов, без зависимостей
 npx serve .  # локально; file:// не работает (ES-модули)
 ```
 
@@ -75,7 +80,12 @@ npx serve .  # локально; file:// не работает (ES-модули)
 
 ## Ручные шаги, которые может сделать только владелец
 
-1. **Firestore rules не задеплоены** — база в test mode, писать может кто угодно. Шаблон в `firestore.rules`, вставить в Firebase Console → Firestore → Rules (требует включения Firebase Auth для owner-правил).
+0. **Перед тестом трёх семей (ОБЯЗАТЕЛЬНО, иначе вход не заработает):**
+   - Firebase Console → Authentication → Sign-in method → включить **Google** и **Email/Password**;
+   - Authentication → Settings → Authorized domains → добавить `natalyatsarapaeva-tech.github.io`;
+   - задеплоить `firestore.rules` (Console → Firestore Database → Rules) — без них база всё ещё в test mode и любой может писать;
+   - войти самой ПЕРВОЙ и нажать «Это моя семья — забрать» в онбординге: легаси-семья `default` со всеми рецептами, историей и планами станет твоей, появится код приглашения для мужа/детей. Мама и сестра создают свои семьи сами.
+1. ~~Firestore rules~~ — см. пункт 0.
 2. **Миграция рецептов**: 🥗 → «🔧 миграция рецептов» → Сканировать → Мигрировать через GPT → снять жёлтые «проверить». Без неё работают fallback'и (категории/парсинг meta), но точность ниже и нет ккал/порцию.
 3. **Обогащение справочника**: страница 🥗 → «🏷️ Обогатить» (категории, staple, хранение — нужны списку покупок).
 4. **Профиль семьи**: 📅 → 👪 — члены, приёмы, время по дням, исключения, квоты ужинов.
