@@ -62,6 +62,29 @@ test('nutritionPayload: валидация ответа GPT', () => {
   assert.deepEqual(nutritionPayload({ kcal: 10 }), { kcal: 10, protein: 0, fat: 0, carbs: 0 });
   assert.equal(nutritionPayload(null), null);
   assert.equal(nutritionPayload({ protein: 5 }), null); // без kcal — невалидно
+  // микроэлементы пишутся, только если модель их вернула
+  assert.deepEqual(nutritionPayload({ kcal: 340, protein: 13, fat: 2, carbs: 72, fiber: 11, potassium: 360, phosphorus: 350 }),
+    { kcal: 340, protein: 13, fat: 2, carbs: 72, fiber: 11, potassium: 360, phosphorus: 350 });
+  assert.equal('fiber' in nutritionPayload({ kcal: 10, protein: 0, fat: 0, carbs: 0 }), false);
+});
+
+test('computeRecipeNutrition: клетчатка/калий/фосфор, netCarbs, неполнота', () => {
+  const dict = buildDict({
+    'цельнозерновая мука': { kcal: 340, protein: 13, fat: 2, carbs: 72, fiber: 11, potassium: 360, phosphorus: 350 },
+    'масло': { kcal: 717, protein: 0.9, fat: 81, carbs: 0.1 }, // без микроэлементов
+  });
+  const recipe = { servings: 2, ingredients: [
+    { n: 'Мука ц/з', a: '100 г', qty: 100, unit: 'g', ing: 'цельнозерновая мука' },
+    { n: 'Масло', a: '100 г', qty: 100, unit: 'g', ing: 'масло' },
+  ]};
+  const { totals, perServing, microMissing } = computeRecipeNutrition(recipe, dict);
+  assert.equal(Math.round(totals.fiber), 11);       // только из муки
+  assert.equal(Math.round(totals.potassium), 360);
+  assert.equal(Math.round(totals.carbs), 72);       // 72 + 0.1 ≈ 72
+  assert.equal(Math.round(totals.netCarbs), 61);    // 72.1 − 11
+  assert.ok(microMissing.fiber, 'у масла нет микроэлементов — сумма неполная');
+  assert.equal(Math.round(perServing.netCarbs), 31); // на порцию из 2
+  assert.equal(Math.round(perServing.potassium), 180);
 });
 
 test('expandIngredients: разделители с вложенным ингредиентом', () => {

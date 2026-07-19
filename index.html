@@ -560,6 +560,16 @@
       Скрывать регулярные из общего списка рецептов
     </label>
 
+    <label class="field-label">🔄 Замены продуктов (только для этой семьи)</label>
+    <div id="fam-subs"></div>
+    <button class="add-row-btn" onclick="addSubRow()">+ Добавить замену</button>
+    <div class="mood-caption" style="margin:-8px 0 18px">в рецептах, списке покупок и расчёте КБЖУ продукт слева показывается как продукт справа. Пример: мука → цельнозерновая мука, сахар → эритрит, белый рис → бурый рис. Сам рецепт в общей книге не меняется.</div>
+
+    <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0 18px;cursor:pointer">
+      <input type="checkbox" id="f-show-micros" style="width:18px;height:18px;accent-color:var(--amber)"/>
+      Показывать клетчатку, калий и фосфор (диабет / почки)
+    </label>
+
     <button class="save-btn" onclick="saveFamily()">💾 Сохранить</button>
 
     <div class="onb-card" id="fam-invite-card" style="display:none">
@@ -618,6 +628,7 @@ import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT } from './js/nutrition.js';
 import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular, filterForeignRegular } from './js/regular.js';
+import { buildSubMap, recipeWithSubs } from './js/substitute.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan,
   initAuth, resolveHousehold, householdId, currentUserEmail, LEGACY_HOUSEHOLD_ID,
@@ -639,14 +650,21 @@ let selectedTags = [];
 let household = null;   // профиль семьи (households/default)
 let hhPromise = null;
 
+let subMap = {}; // пер-семейные замены продуктов (buildSubMap), обновляется с профилем
+
 function ensureHousehold() {
-  if (!hhPromise) hhPromise = loadHousehold().then(p => { household = p; return p; });
+  if (!hhPromise) hhPromise = loadHousehold().then(p => { household = p; subMap = buildSubMap(p.substitutions); return p; });
   return hhPromise;
 }
 
 function householdExclude() {
   return household ? parseWantedIngredients(household.excludeText) : [];
 }
+
+// Рецепт с применёнными заменами семьи — для показа, КБЖУ и покупок.
+// Оригинал в общей книге не трогаем (редактор всегда работает с исходным).
+function viewRecipe(r) { return recipeWithSubs(r, subMap); }
+function showMicros() { return !!household?.showMicros; }
 
 async function loadRecipes() {
   // профиль нужен сразу: hideRegular влияет на первый рендер списка
@@ -842,8 +860,8 @@ async function showNutritionPanel(recipe) {
   await ensureDict();
   if (token !== nutritionRenderToken) return; // рецепт уже сменился
 
-  const { rows, totals, perServing, servings, hasData, hasMissing } =
-    computeRecipeNutrition(recipe, ingredientDict);
+  const { rows, totals, perServing, servings, hasData, hasMissing, microMissing } =
+    computeRecipeNutrition(viewRecipe(recipe), ingredientDict);
   recipeTotals = totals;
 
   if (!hasData && !hasMissing) { wrap.innerHTML = ''; return; }
@@ -859,11 +877,18 @@ async function showNutritionPanel(recipe) {
     </div>`;
   }).join('');
 
+  // Микроэлементы (клетчатка/калий/фосфор) — для диабет/почечных семей.
+  // «≥» показываем, когда часть продуктов без данных (сумма неполная).
+  const ge = m => microMissing[m] ? '≥' : '';
+  const microsLine = src =>
+    `<div class="nutrition-macros-row">🩸 Чистые угл.: <b>${ge('fiber')}${fmt(src.netCarbs)}г</b> (клетчатка ${ge('fiber')}${fmt(src.fiber)}г) &nbsp;·&nbsp; 🧂 K ${ge('potassium')}${fmt(src.potassium)}мг &nbsp;·&nbsp; P ${ge('phosphorus')}${fmt(src.phosphorus)}мг</div>`;
+  const microsHTML = (showMicros() && hasData) ? microsLine(perServing || totals) : '';
+
   const perServingHTML = perServing ? `
     <div class="nutrition-macros-row">На порцию (из ${servings}): <b>${fmt(perServing.kcal)} ккал</b> · Б${fmt(perServing.protein)} Ж${fmt(perServing.fat)} У${fmt(perServing.carbs)}г</div>` : '';
   const totalHTML = hasData ? `
     <div class="nutrition-total-row"><span>Итого (расч.):</span><span>${fmt(totals.kcal)} ккал</span></div>
-    <div class="nutrition-macros-row">Б: ${fmt(totals.protein)}г &nbsp;·&nbsp; Ж: ${fmt(totals.fat)}г &nbsp;·&nbsp; У: ${fmt(totals.carbs)}г</div>${perServingHTML}` : '';
+    <div class="nutrition-macros-row">Б: ${fmt(totals.protein)}г &nbsp;·&nbsp; Ж: ${fmt(totals.fat)}г &nbsp;·&nbsp; У: ${fmt(totals.carbs)}г</div>${perServingHTML}${microsHTML}` : '';
 
   const calcHTML = hasData ? `
     <div class="nutrition-divider"></div>
@@ -947,7 +972,7 @@ window.lookupMissingNutrition = async function() {
   if (!recipe) return;
 
   await ensureDict();
-  const missing = expandIngredients(recipe.ingredients)
+  const missing = expandIngredients(viewRecipe(recipe).ingredients)
     .filter(i => i.n && !dictLookup(ingredientDict, entryKey(i)))
     .map(i => i.n);
 
@@ -977,10 +1002,12 @@ let currentMultiplier = 1;
 
 function renderIngredients(ingredients, multiplier) {
   const ing = document.getElementById('r-ingredients');
-  ing.innerHTML = expandIngredients(ingredients).map(i => {
+  // замены семьи применяются к отображаемому списку (оригинал не трогаем)
+  ing.innerHTML = expandIngredients(recipeWithSubs({ ingredients }, subMap).ingredients).map(i => {
     if (i.divider != null) return '<div class="ingredient-divider">' + escHtml(i.divider) + '</div>';
     const amt = scaleAmount(i.a || '', multiplier);
-    return '<div class="ingredient-item"><span class="ingredient-name">' + escHtml(i.n) + '</span><span class="ingredient-amount">' + escHtml(amt) + '</span></div>';
+    const sub = i.origName ? ` <span style="color:var(--amber);font-size:11px">↺ вместо «${escHtml(i.origName)}»</span>` : '';
+    return '<div class="ingredient-item"><span class="ingredient-name">' + escHtml(i.n) + sub + '</span><span class="ingredient-amount">' + escHtml(amt) + '</span></div>';
   }).join('');
 }
 
@@ -1214,7 +1241,7 @@ async function fillIdeaKcal(r) {
   await ensureDict();
   const el = document.getElementById('idea-kcal');
   if (!el) return; // карточку уже сменили
-  const { perServing, totals, hasData } = computeRecipeNutrition(r, ingredientDict);
+  const { perServing, totals, hasData } = computeRecipeNutrition(viewRecipe(r), ingredientDict);
   if (!hasData) return;
   el.textContent = perServing
     ? ` · ${Math.round(perServing.kcal)} ккал/порц`
@@ -1410,6 +1437,8 @@ window.surpriseCook = async function() {
 let currentPlan = null;
 
 function recipesById() { const m = {}; allRecipes.forEach(r => m[r.id] = r); return m; }
+// Рецепты с заменами семьи — для КБЖУ недели и списка покупок.
+function subRecipesById() { const m = {}; allRecipes.forEach(r => m[r.id] = viewRecipe(r)); return m; }
 function profileForPlanner() { return { ...household, exclude: householdExclude() }; }
 
 function weekRangeLabel(ws) {
@@ -1502,7 +1531,9 @@ window.weekToggleCheck = async function(key, el) {
 }
 
 function renderWeek() {
-  const byId = recipesById();
+  // КБЖУ и покупки — по рецептам с заменами семьи; заголовки/эмодзи те же,
+  // а weekOpen открывает оригинал из allRecipes (правка не ломается)
+  const byId = subRecipesById();
   const grid = document.getElementById('week-grid');
   const slots = buildSlots(household);
   const byDay = {};
@@ -1751,6 +1782,17 @@ function addFamMemberRow(name = '', coeff = 1) {
 }
 window.addFamMember = () => addFamMemberRow('', 1);
 
+function addSubRow(from = '', to = '') {
+  const row = document.createElement('div');
+  row.className = 'fam-member-row';
+  row.innerHTML = `<input class="sub-from fm-name" placeholder="Продукт" value="${escHtml(from)}"/>
+    <span style="color:var(--amber);font-weight:700">→</span>
+    <input class="sub-to fm-name" placeholder="Замена" value="${escHtml(to)}"/>
+    <button class="ing-del" onclick="this.parentElement.remove()" type="button">×</button>`;
+  document.getElementById('fam-subs').appendChild(row);
+}
+window.addSubRow = () => addSubRow('', '');
+
 window.openFamily = async function() {
   await ensureHousehold();
   document.getElementById('f-name').value = household.name || '';
@@ -1762,6 +1804,9 @@ window.openFamily = async function() {
   document.getElementById('f-regular').value = household.regularDishesText || '';
   document.getElementById('f-regular-count').value = '';
   document.getElementById('f-hide-regular').checked = !!household.hideRegular;
+  document.getElementById('f-show-micros').checked = !!household.showMicros;
+  document.getElementById('fam-subs').innerHTML = '';
+  (household.substitutions?.length ? household.substitutions : []).forEach(s => addSubRow(s.from, s.to));
   const regN = allRecipes.filter(isRegularRecipe).length;
   document.getElementById('regular-status').textContent =
     regN ? `сейчас в базе ${regN} регулярных рецептов` : '';
@@ -1787,7 +1832,7 @@ window.openFamily = async function() {
 }
 
 window.saveFamily = async function() {
-  const members = [...document.querySelectorAll('.fam-member-row')].map(row => ({
+  const members = [...document.querySelectorAll('#fam-members .fam-member-row')].map(row => ({
     name: row.querySelector('.fm-name').value.trim(),
     coeff: parseFloat(row.querySelector('.fm-coeff').value) || 1,
   })).filter(m => m.name);
@@ -1801,6 +1846,10 @@ window.saveFamily = async function() {
     rhythm[d] = v > 0 ? v : null;
   });
   const qv = id => Math.max(0, parseInt(document.getElementById(id).value, 10) || 0);
+  const substitutions = [...document.querySelectorAll('#fam-subs .fam-member-row')].map(row => ({
+    from: row.querySelector('.sub-from').value.trim(),
+    to: row.querySelector('.sub-to').value.trim(),
+  })).filter(s => s.from && s.to);
   household = {
     ...household, // служебные поля (ownerUid, joinCode) не затираются
     name: document.getElementById('f-name').value.trim() || 'Моя семья',
@@ -1811,8 +1860,11 @@ window.saveFamily = async function() {
     excludeText: document.getElementById('f-exclude').value.trim(),
     regularDishesText: document.getElementById('f-regular').value.trim(),
     hideRegular: document.getElementById('f-hide-regular').checked,
+    substitutions,
+    showMicros: document.getElementById('f-show-micros').checked,
     dinnerQuota: { meat: qv('f-q-meat'), fish: qv('f-q-fish'), veg: qv('f-q-veg') },
   };
+  subMap = buildSubMap(substitutions); // применяем сразу, без перезагрузки
   try {
     await saveHousehold(household);
     openWeek();
