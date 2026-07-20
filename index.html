@@ -298,8 +298,10 @@
     .pw-dish .pw-mark{color:#8b6355;font-size:10px;}
     .pw-empty{color:#aaa;}
     .pw-note{font-size:10.5px;font-style:italic;color:#555;margin:0 0 .8mm 20mm;white-space:pre-wrap;}
-    /* список покупок в две колонки */
-    .pw-shop{columns:2;column-gap:8mm;}
+    /* список покупок в две колонки (grid с явными колонками — печатается
+       надёжно, в отличие от CSS-multicolumn, который на длинной странице
+       сваливает всё в первую колонку) */
+    .pw-shop{display:grid;grid-template-columns:1fr 1fr;gap:0 8mm;align-items:start;}
     .pw-shop-cat{break-inside:avoid;margin-bottom:2mm;}
     .pw-shop-cat-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5c3d2e;margin-bottom:1mm;}
     .pw-shop-item{display:flex;justify-content:space-between;gap:4mm;font-size:11px;padding:.5mm 0;border-bottom:.4pt solid #eee4d6;}
@@ -1708,23 +1710,41 @@ function printMenuHTML() {
 function printShoppingHTML() {
   const items = aggregateShopping(currentPlan.slots, subRecipesById(), ingredientDict, profileForPlanner());
   if (!items.length) return '';
-  let html = '', lastCat = null, open = false;
+
+  // группируем по категориям (порядок уже отсортирован в aggregateShopping)
+  const groups = [];
   for (const it of items) {
-    if (it.category !== lastCat) {
-      if (open) html += '</div>';
-      html += `<div class="pw-shop-cat"><div class="pw-shop-cat-label">${CATEGORY_LABELS[it.category] || CATEGORY_LABELS.other}</div>`;
-      lastCat = it.category; open = true;
-    }
-    html += `<div class="pw-shop-item">
+    let g = groups[groups.length - 1];
+    if (!g || g.cat !== it.category) { g = { cat: it.category, items: [] }; groups.push(g); }
+    g.items.push(it);
+  }
+  const groupHtml = g => `<div class="pw-shop-cat">
+      <div class="pw-shop-cat-label">${CATEGORY_LABELS[g.cat] || CATEGORY_LABELS.other}</div>
+      ${g.items.map(it => `<div class="pw-shop-item">
         <span class="pw-shop-name"><span class="pw-shop-box"></span>${escHtml(it.label)}</span>
         <span class="pw-shop-amt">${escHtml(shoppingAmountLabel(it))}</span>
-      </div>`;
-  }
-  if (open) html += '</div>';
+      </div>`).join('')}
+    </div>`;
+
+  // делим категории по двум колонкам: жадно кладём бОльшие в менее
+  // заполненную колонку (одна крупная категория не перекашивает), внутри
+  // колонки сохраняем исходный порядок категорий
+  const cols = [{ n: 0, g: [] }, { n: 0, g: [] }];
+  groups.map((g, idx) => ({ ...g, idx }))
+    .sort((a, b) => b.items.length - a.items.length)
+    .forEach(g => {
+      const c = cols[0].n <= cols[1].n ? cols[0] : cols[1];
+      c.g.push(g); c.n += g.items.length + 1;
+    });
+  const left = cols[0].g.sort((a, b) => a.idx - b.idx);
+  const right = cols[1].g.sort((a, b) => a.idx - b.idx);
   return `
     <section class="pw-page-break">
       <div class="pw-title">🛒 Список покупок</div>
-      <div class="pw-shop">${html}</div>
+      <div class="pw-shop">
+        <div>${left.map(groupHtml).join('')}</div>
+        <div>${right.map(groupHtml).join('')}</div>
+      </div>
     </section>`;
 }
 
