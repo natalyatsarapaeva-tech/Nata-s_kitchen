@@ -275,18 +275,20 @@
     .onb-card p{font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.5;}
     .join-code-badge{display:inline-block;background:var(--warm);color:var(--brown);font-weight:700;font-size:18px;letter-spacing:.25em;padding:8px 14px;border-radius:10px;font-family:monospace;}
 
-    /* ── PRINT: меню недели ── */
-    /* Альбомный лист: Пн-Чт в левой колонке, Пт-Вс в правой (в выходные
-       приёмов больше, колонки выравниваются). Экранный UI при печати скрыт. */
+    /* ── PRINT: меню недели + покупки + рецепты ── */
+    /* Портрет. Стр.1 — меню (Пн-Чт | Пт-Вс), стр.2 — список покупок в две
+       колонки, стр.3+ — рецепты не-регулярных блюд недели, по 2 на лист.
+       Экранный UI при печати скрыт. */
     #print-week{display:none;}
     @media print{
       body>*:not(#print-week){display:none!important;}
       #print-week{display:block!important;}
       body{background:#fff;}
     }
-    @page{size:A4 landscape;margin:10mm;}
+    @page{size:A4 portrait;margin:12mm;}
+    .pw-page-break{break-before:page;}
     .pw-title{font-family:'Playfair Display',serif;font-size:19px;color:#5c3d2e;margin-bottom:5mm;}
-    .pw-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10mm;align-items:start;}
+    .pw-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 8mm;align-items:start;}
     .pw-day{margin-bottom:4mm;break-inside:avoid;}
     .pw-day-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5c3d2e;border-bottom:1.5pt solid #5c3d2e;padding-bottom:1mm;margin-bottom:1.5mm;}
     .pw-slot{display:flex;gap:3mm;align-items:baseline;font-size:11.5px;padding:.8mm 0;border-bottom:.5pt solid #e8ddcf;}
@@ -296,6 +298,26 @@
     .pw-dish .pw-mark{color:#8b6355;font-size:10px;}
     .pw-empty{color:#aaa;}
     .pw-note{font-size:10.5px;font-style:italic;color:#555;margin:0 0 .8mm 20mm;white-space:pre-wrap;}
+    /* список покупок в две колонки */
+    .pw-shop{columns:2;column-gap:8mm;}
+    .pw-shop-cat{break-inside:avoid;margin-bottom:2mm;}
+    .pw-shop-cat-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5c3d2e;margin-bottom:1mm;}
+    .pw-shop-item{display:flex;justify-content:space-between;gap:4mm;font-size:11px;padding:.5mm 0;border-bottom:.4pt solid #eee4d6;}
+    .pw-shop-box{width:3mm;height:3mm;border:.6pt solid #8b6355;border-radius:.6mm;flex-shrink:0;margin-right:2mm;}
+    .pw-shop-name{flex:1;display:flex;align-items:center;}
+    .pw-shop-amt{color:#8b6355;font-weight:700;font-size:10px;white-space:nowrap;}
+    /* рецепты: по два на страницу */
+    .pw-recipe{break-inside:avoid;margin-bottom:8mm;}
+    .pw-r-title{font-family:'Playfair Display',serif;font-size:16px;color:#5c3d2e;}
+    .pw-r-meta{font-size:10px;color:#8b6355;margin-bottom:2mm;}
+    .pw-r-sub{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#d4843a;margin:2.5mm 0 1mm;}
+    .pw-r-ings{columns:2;column-gap:8mm;}
+    .pw-r-ing{display:flex;justify-content:space-between;gap:4mm;font-size:10.5px;padding:.3mm 0;break-inside:avoid;}
+    .pw-r-ing-amt{color:#8b6355;white-space:nowrap;}
+    .pw-r-div{font-size:9px;font-weight:700;text-transform:uppercase;color:#d4843a;padding-top:1mm;break-inside:avoid;}
+    .pw-r-step{display:flex;gap:3mm;font-size:10.5px;line-height:1.4;margin-bottom:1.2mm;break-inside:avoid;}
+    .pw-r-step-num{flex-shrink:0;width:4mm;height:4mm;border-radius:50%;background:#d4843a;color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center;margin-top:.4mm;}
+    .pw-r-note{font-size:10px;font-style:italic;color:#5c3d2e;background:#f5e6d0;border-radius:1.5mm;padding:1.5mm 2mm;margin-top:2mm;}
 
     /* ── ANIM ── */
     .fade-in{animation:fadeIn .3s ease both;}
@@ -1635,15 +1657,17 @@ function renderShopping(byId) {
 }
 
 // ── ПЕЧАТЬ НЕДЕЛИ ──
-// Собирает печатную версию всего меню: альбомный лист, Пн-Чт в левой
-// колонке, Пт-Вс в правой (в выходные приёмов больше). Заметки печатаются
-// под своим приёмом.
+// Печатная версия (портрет, все замены семьи применены):
+//   стр.1 — меню недели (Пн-Чт | Пт-Вс);
+//   стр.2 — список покупок в две колонки;
+//   стр.3+ — рецепты не-регулярных блюд недели, по 2 на лист.
 const PRINT_DAY_LABELS = {
   mon: 'Понедельник', tue: 'Вторник', wed: 'Среда', thu: 'Четверг',
   fri: 'Пятница', sat: 'Суббота', sun: 'Воскресенье',
 };
 
-window.printWeek = function() {
+// ── Стр.1: меню ──
+function printMenuHTML() {
   const byId = recipesById();
   const slots = buildSlots(household);
   const byDay = {};
@@ -1670,13 +1694,83 @@ window.printWeek = function() {
       ${byDay[day].map(slotHtml).join('')}
     </div>`;
   const col = days => days.filter(d => byDay[d]).map(dayHtml).join('');
+  return `
+    <section>
+      <div class="pw-title">📅 Меню недели · ${weekRangeLabel(currentPlan.weekStart || weekStartISO())}</div>
+      <div class="pw-grid">
+        <div>${col(['mon', 'tue', 'wed', 'thu'])}</div>
+        <div>${col(['fri', 'sat', 'sun'])}</div>
+      </div>
+    </section>`;
+}
 
-  document.getElementById('print-week').innerHTML = `
-    <div class="pw-title">📅 Меню недели · ${weekRangeLabel(currentPlan.weekStart || weekStartISO())}</div>
-    <div class="pw-grid">
-      <div>${col(['mon', 'tue', 'wed', 'thu'])}</div>
-      <div>${col(['fri', 'sat', 'sun'])}</div>
+// ── Стр.2: список покупок в две колонки (с чекбоксами для магазина) ──
+function printShoppingHTML() {
+  const items = aggregateShopping(currentPlan.slots, subRecipesById(), ingredientDict, profileForPlanner());
+  if (!items.length) return '';
+  let html = '', lastCat = null, open = false;
+  for (const it of items) {
+    if (it.category !== lastCat) {
+      if (open) html += '</div>';
+      html += `<div class="pw-shop-cat"><div class="pw-shop-cat-label">${CATEGORY_LABELS[it.category] || CATEGORY_LABELS.other}</div>`;
+      lastCat = it.category; open = true;
+    }
+    html += `<div class="pw-shop-item">
+        <span class="pw-shop-name"><span class="pw-shop-box"></span>${escHtml(it.label)}</span>
+        <span class="pw-shop-amt">${escHtml(shoppingAmountLabel(it))}</span>
+      </div>`;
+  }
+  if (open) html += '</div>';
+  return `
+    <section class="pw-page-break">
+      <div class="pw-title">🛒 Список покупок</div>
+      <div class="pw-shop">${html}</div>
+    </section>`;
+}
+
+// ── Стр.3+: рецепты не-регулярных блюд недели, по 2 на лист ──
+function printRecipeCardHTML(recipe) {
+  const r = viewRecipe(recipe); // с заменами семьи
+  const ings = expandIngredients(r.ingredients).map(i => {
+    if (i.divider != null) return `<div class="pw-r-div">${escHtml(i.divider)}</div>`;
+    return `<div class="pw-r-ing"><span>${escHtml(i.n)}</span><span class="pw-r-ing-amt">${escHtml(i.a || '')}</span></div>`;
+  }).join('');
+  const steps = (r.steps || []).map((s, i) =>
+    `<div class="pw-r-step"><span class="pw-r-step-num">${i + 1}</span><span>${escHtml(s)}</span></div>`).join('');
+  const metaBits = [r.meta, r.yield].filter(Boolean).map(escHtml).join(' · ');
+  return `<div class="pw-recipe">
+      <div class="pw-r-title">${escHtml(r.emoji || '')} ${escHtml(r.title)}</div>
+      ${metaBits ? `<div class="pw-r-meta">${metaBits}</div>` : ''}
+      ${r.note ? `<div class="pw-r-note">💡 ${escHtml(r.note)}</div>` : ''}
+      ${ings ? `<div class="pw-r-sub">Ингредиенты</div><div class="pw-r-ings">${ings}</div>` : ''}
+      ${steps ? `<div class="pw-r-sub">Приготовление</div>${steps}` : ''}
     </div>`;
+}
+
+function printRecipesHTML() {
+  const byId = recipesById();
+  const seen = new Set();
+  const recipes = [];
+  for (const slot of Object.values(currentPlan.slots || {})) {
+    const r = slot?.recipeId ? byId[slot.recipeId] : null;
+    if (!r || seen.has(r.id) || isRegularRecipe(r)) continue; // регулярные — без полного рецепта
+    seen.add(r.id);
+    recipes.push(r);
+  }
+  let html = '';
+  for (let i = 0; i < recipes.length; i += 2) {
+    // по два рецепта на страницу; каждый лист — с разрыва
+    html += `<section class="pw-page-break">
+        ${printRecipeCardHTML(recipes[i])}
+        ${recipes[i + 1] ? printRecipeCardHTML(recipes[i + 1]) : ''}
+      </section>`;
+  }
+  return html;
+}
+
+window.printWeek = function() {
+  document.getElementById('print-week').innerHTML =
+    printMenuHTML() + printShoppingHTML() + printRecipesHTML();
   window.print();
 }
 
