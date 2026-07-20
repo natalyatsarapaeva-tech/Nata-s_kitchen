@@ -844,7 +844,8 @@ window.clearSearch = function() {
 // ── NUTRITION ──
 let ingredientDict = null;   // справочник ингредиентов, загружается один раз
 let dictPromise = null;
-let recipeTotals = { kcal: 0, protein: 0, fat: 0, carbs: 0 };
+let recipeTotals = { kcal: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, potassium: 0, phosphorus: 0, netCarbs: 0 };
+let recipeMicroMissing = { fiber: false, potassium: false, phosphorus: false }; // для «≥» на порцию
 let nutritionRenderToken = 0; // защита от гонки при быстрой смене рецептов
 
 function ensureDict() {
@@ -863,6 +864,7 @@ async function showNutritionPanel(recipe) {
   const { rows, totals, perServing, servings, hasData, hasMissing, microMissing } =
     computeRecipeNutrition(viewRecipe(recipe), ingredientDict);
   recipeTotals = totals;
+  recipeMicroMissing = microMissing;
 
   if (!hasData && !hasMissing) { wrap.innerHTML = ''; return; }
 
@@ -877,18 +879,19 @@ async function showNutritionPanel(recipe) {
     </div>`;
   }).join('');
 
-  // Микроэлементы (клетчатка/калий/фосфор) — для диабет/почечных семей.
-  // «≥» показываем, когда часть продуктов без данных (сумма неполная).
-  const ge = m => microMissing[m] ? '≥' : '';
-  const microsLine = src =>
-    `<div class="nutrition-macros-row">🩸 Чистые угл.: <b>${ge('fiber')}${fmt(src.netCarbs)}г</b> (клетчатка ${ge('fiber')}${fmt(src.fiber)}г) &nbsp;·&nbsp; 🧂 K ${ge('potassium')}${fmt(src.potassium)}мг &nbsp;·&nbsp; P ${ge('phosphorus')}${fmt(src.phosphorus)}мг</div>`;
-  const microsHTML = (showMicros() && hasData) ? microsLine(perServing || totals) : '';
-
-  const perServingHTML = perServing ? `
-    <div class="nutrition-macros-row">На порцию (из ${servings}): <b>${fmt(perServing.kcal)} ккал</b> · Б${fmt(perServing.protein)} Ж${fmt(perServing.fat)} У${fmt(perServing.carbs)}г</div>` : '';
+  // Ведущая цифра — на порцию: поле «Порций в блюде» заполняется значением
+  // из рецепта (servings), пользователь может поменять, КБЖУ и микроэлементы
+  // пересчитываются на порцию живьём (renderPerServing). Итого на всё блюдо —
+  // вторичной строкой.
   const totalHTML = hasData ? `
-    <div class="nutrition-total-row"><span>Итого (расч.):</span><span>${fmt(totals.kcal)} ккал</span></div>
-    <div class="nutrition-macros-row">Б: ${fmt(totals.protein)}г &nbsp;·&nbsp; Ж: ${fmt(totals.fat)}г &nbsp;·&nbsp; У: ${fmt(totals.carbs)}г</div>${perServingHTML}${microsHTML}` : '';
+    <div class="nutrition-total-row"><span>Итого на всё блюдо:</span><span>${fmt(totals.kcal)} ккал</span></div>
+    <div class="nutrition-macros-row">Б: ${fmt(totals.protein)}г &nbsp;·&nbsp; Ж: ${fmt(totals.fat)}г &nbsp;·&nbsp; У: ${fmt(totals.carbs)}г</div>
+    <div class="nutrition-divider"></div>
+    <div class="nutrition-calc-row">
+      <span class="nutrition-calc-label">Порций в блюде</span>
+      <input class="nutrition-num-input" type="number" id="n-servings" min="0.5" step="0.5" placeholder="напр. 4" value="${servings || ''}" oninput="renderPerServing()"/>
+    </div>
+    <div id="n-perserv"></div>` : '';
 
   const calcHTML = hasData ? `
     <div class="nutrition-divider"></div>
@@ -896,27 +899,17 @@ async function showNutritionPanel(recipe) {
       <span class="nutrition-calc-label">Вес блюда</span>
       <input class="nutrition-num-input" type="number" id="n-weight" placeholder="г" min="1" oninput="updateNutritionCalc()"/>
       <span class="nutrition-result" id="n-per100g">— ккал / 100г</span>
-    </div>
-    <div class="nutrition-calc-row">
-      <span class="nutrition-calc-label">Частей / порций</span>
-      <input class="nutrition-num-input" type="number" id="n-parts" placeholder="шт" min="1" oninput="updateNutritionCalc()"/>
-      <span class="nutrition-result" id="n-per-part">— ккал / шт</span>
     </div>` : '';
 
   const lookupBtn = hasMissing
     ? `<button class="nutrition-lookup-btn" id="nutrition-lookup-btn" onclick="lookupMissingNutrition()">✨ Узнать</button>` : '';
-
-  const summary = hasData
-    ? (perServing ? `${fmt(perServing.kcal)} ккал/порция · всего ${fmt(totals.kcal)}`
-                  : `${fmt(totals.kcal)} ккал · Б${fmt(totals.protein)} Ж${fmt(totals.fat)} У${fmt(totals.carbs)}г`)
-    : 'нет данных';
 
   wrap.innerHTML = `
     <div class="nutrition-accordion">
       <button class="nutrition-toggle" onclick="toggleNutrition()" type="button" id="nutrition-toggle">
         <div class="nutrition-toggle-left">
           <span class="nutrition-toggle-label">Калорийность</span>
-          <span class="nutrition-toggle-summary" id="nutrition-summary">${summary}</span>
+          <span class="nutrition-toggle-summary" id="nutrition-summary">${hasData ? '…' : 'нет данных'}</span>
         </div>
         <span class="nutrition-chevron" id="nutrition-chevron">▼</span>
       </button>
@@ -929,7 +922,31 @@ async function showNutritionPanel(recipe) {
         </div>
       </div>
     </div>`;
+  if (hasData) renderPerServing();
 }
+
+// Пересчёт КБЖУ и микроэлементов на порцию из введённого числа порций.
+// Пусто/некорректно → показываем на всё блюдо (делитель 1).
+window.renderPerServing = function() {
+  const box = document.getElementById('n-perserv');
+  if (!box) return;
+  const fmt = n => n != null ? Math.round(n) : '—';
+  const raw = parseFloat(document.getElementById('n-servings')?.value);
+  const n = raw > 0 ? raw : 1;
+  const t = recipeTotals;
+  const per = k => (t[k] || 0) / n;
+  const whole = !(raw > 0);
+  const label = whole ? 'На всё блюдо' : `На порцию (из ${raw % 1 ? raw : Math.round(raw)})`;
+  const ge = m => recipeMicroMissing[m] ? '≥' : '';
+  const microsHTML = showMicros()
+    ? `<div class="nutrition-macros-row">🩸 Чистые угл.: <b>${ge('fiber')}${fmt(per('netCarbs'))}г</b> (клетчатка ${ge('fiber')}${fmt(per('fiber'))}г) &nbsp;·&nbsp; 🧂 K ${ge('potassium')}${fmt(per('potassium'))}мг &nbsp;·&nbsp; P ${ge('phosphorus')}${fmt(per('phosphorus'))}мг</div>` : '';
+  box.innerHTML = `
+    <div class="nutrition-macros-row" style="font-size:14px;color:var(--brown)">${label}: <b>${fmt(per('kcal'))} ккал</b> · Б${fmt(per('protein'))} Ж${fmt(per('fat'))} У${fmt(per('carbs'))}г</div>${microsHTML}`;
+  const summary = document.getElementById('nutrition-summary');
+  if (summary) summary.textContent = whole
+    ? `${fmt(per('kcal'))} ккал на блюдо`
+    : `${fmt(per('kcal'))} ккал/порция`;
+};
 
 window.toggleNutrition = function() {
   const body = document.getElementById('nutrition-body');
@@ -941,24 +958,10 @@ window.toggleNutrition = function() {
 
 window.updateNutritionCalc = function() {
   const weight = parseFloat(document.getElementById('n-weight')?.value) || 0;
-  const parts = parseFloat(document.getElementById('n-parts')?.value) || 0;
+  if (weight <= 0) return;
   const { kcal, protein, fat, carbs } = recipeTotals;
-  if (weight > 0) {
-    const p100 = kcal / weight * 100;
-    const prot100 = protein / weight * 100;
-    const fat100 = fat / weight * 100;
-    const carb100 = carbs / weight * 100;
-    document.getElementById('n-per100g').textContent =
-      `${Math.round(p100)} ккал · Б${Math.round(prot100)} Ж${Math.round(fat100)} У${Math.round(carb100)}`;
-  }
-  if (parts > 0) {
-    const pPart = kcal / parts;
-    const protPart = protein / parts;
-    const fatPart = fat / parts;
-    const carbPart = carbs / parts;
-    document.getElementById('n-per-part').textContent =
-      `${Math.round(pPart)} ккал · Б${Math.round(protPart)} Ж${Math.round(fatPart)} У${Math.round(carbPart)}`;
-  }
+  document.getElementById('n-per100g').textContent =
+    `${Math.round(kcal / weight * 100)} ккал · Б${Math.round(protein / weight * 100)} Ж${Math.round(fat / weight * 100)} У${Math.round(carbs / weight * 100)}`;
 };
 
 window.lookupMissingNutrition = async function() {

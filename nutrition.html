@@ -68,6 +68,7 @@
     <button class="btn btn-secondary" onclick="scanAll()">🔍 Сканировать все рецепты</button>
     <button class="btn btn-secondary" id="fix-unitg-btn" onclick="fixMissingUnitG()" style="display:none">🔄 Обновить unitG (штучные ингредиенты)</button>
     <button class="btn btn-secondary" id="enrich-btn" onclick="enrichDictionary()" style="display:none">🏷️ Обогатить справочник (категория · staple · хранение)</button>
+    <button class="btn btn-secondary" id="micros-btn" onclick="fillMicros()" style="display:none">🩸 Добавить клетчатку · калий · фосфор</button>
     <button class="btn btn-primary" id="lookup-btn" onclick="lookupAllMissing()" style="display:none">✨ Заполнить отсутствующие через GPT</button>
     <div id="progress-wrap" style="display:none"><div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div></div>
     <div id="status-msg"></div>
@@ -78,7 +79,7 @@
       <label class="card-label" style="margin-bottom:0" id="table-title">Ингредиенты</label>
     </div>
     <table class="ing-table">
-      <thead><tr><th>Ингредиент</th><th style="text-align:center">×</th><th style="text-align:right">ккал</th><th style="text-align:right">Б</th><th style="text-align:right">Ж</th><th style="text-align:right">У</th><th></th></tr></thead>
+      <thead><tr><th>Ингредиент</th><th style="text-align:center">×</th><th style="text-align:right">ккал</th><th style="text-align:right">Б</th><th style="text-align:right">Ж</th><th style="text-align:right">У</th><th style="text-align:right">Клетч</th><th style="text-align:right">K</th><th style="text-align:right">P</th><th></th></tr></thead>
       <tbody id="ing-tbody"></tbody>
     </table>
   </div>
@@ -154,6 +155,16 @@ window.scanAll = async function() {
     enrichBtn.textContent = `🏷️ Обогатить ${noCategoryCount} записей (категория · staple · хранение)`;
   }
 
+  // Записи без клетчатки/калия/фосфора — их «Заполнить отсутствующие» не
+  // трогает (у них уже есть ккал), поэтому нужна отдельная дозаливка.
+  const noMicrosCount = Object.keys(nutritionData)
+    .filter(k => nutritionData[k].fiber == null || nutritionData[k].potassium == null || nutritionData[k].phosphorus == null).length;
+  const microsBtn = document.getElementById('micros-btn');
+  if (noMicrosCount > 0) {
+    microsBtn.style.display = 'block';
+    microsBtn.textContent = `🩸 Добавить клетчатку · калий · фосфор для ${noMicrosCount} записей`;
+  } else microsBtn.style.display = 'none';
+
   renderTable(keys);
   setStatus(`${keys.length} уникальных ингредиентов · ${foundCount} с данными · ${missingCount} нужно добавить`);
 };
@@ -169,6 +180,7 @@ function renderTable(keys) {
     const nut = resolved(k);
     const info = ingredientMap[k];
     const escapedKey = escHtml(k.replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+    const micro = v => v == null ? '<span style="color:#c0392b">—</span>' : Math.round(v);
     if (nut) {
       return `<tr>
         <td class="td-name">${escHtml(info.display)}</td>
@@ -177,13 +189,16 @@ function renderTable(keys) {
         <td class="td-nut">${nut.protein}</td>
         <td class="td-nut">${nut.fat}</td>
         <td class="td-nut">${nut.carbs}</td>
+        <td class="td-nut">${micro(nut.fiber)}</td>
+        <td class="td-nut">${micro(nut.potassium)}</td>
+        <td class="td-nut">${micro(nut.phosphorus)}</td>
         <td></td>
       </tr>`;
     }
     return `<tr>
       <td class="td-name">${escHtml(info.display)}</td>
       <td class="td-count">${info.count}</td>
-      <td colspan="4" class="td-missing">нет данных</td>
+      <td colspan="7" class="td-missing">нет данных</td>
       <td><button class="lookup-one-btn" id="btn-${escHtml(k)}" onclick="lookupOne('${escapedKey}')" type="button">GPT</button></td>
     </tr>`;
   }).join('');
@@ -368,6 +383,58 @@ window.enrichDictionary = async function() {
   setStatus(`✅ Справочник обогащён: ${processed} записей.`);
   btn.disabled = false;
   btn.style.display = 'none';
+};
+
+// ── ДОЗАЛИВКА МИКРОЭЛЕМЕНТОВ ──
+// «Заполнить отсутствующие» берёт только записи вообще без данных; у уже
+// заполненных ингредиентов клетчатки/калия/фосфора нет, а перезапрашивать
+// их надо отдельно. Общий nutrition-промпт уже возвращает эти поля —
+// подмешиваем ТОЛЬКО их, не трогая проверенные ккал/Б/Ж/У.
+window.fillMicros = async function() {
+  const need = Object.keys(nutritionData)
+    .filter(k => nutritionData[k].fiber == null || nutritionData[k].potassium == null || nutritionData[k].phosphorus == null);
+  if (!need.length) { setStatus('✅ У всех записей уже есть клетчатка/калий/фосфор.'); return; }
+
+  const btn = document.getElementById('micros-btn');
+  btn.disabled = true;
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressFill = document.getElementById('progress-fill');
+  progressWrap.style.display = 'block'; progressFill.style.width = '0%';
+
+  const BATCH = 25;
+  let processed = 0, updated = 0;
+  for (let i = 0; i < need.length; i += BATCH) {
+    const batch = need.slice(i, i + BATCH);
+    setStatus(`Микроэлементы: ${i + 1}–${Math.min(i + BATCH, need.length)} из ${need.length}…`);
+    try {
+      // имена = канонические ключи (мука, гречка…) — совпадение точное
+      const result = await callGPT(batch);
+      for (const [name, vals] of Object.entries(result)) {
+        if (!vals) continue;
+        const normName = normalize(name);
+        const key = batch.find(k => k === normName) || normName;
+        if (!nutritionData[key]) continue;
+        const extra = {};
+        for (const m of ['fiber', 'potassium', 'phosphorus']) {
+          const v = vals[m];
+          if (v != null && !isNaN(+v)) extra[m] = +v;
+        }
+        if (!Object.keys(extra).length) continue;
+        nutritionData[key] = { ...nutritionData[key], ...extra };
+        await setDoc(doc(db, 'nutrition', key), nutritionData[key]);
+        updated++;
+      }
+      processed += batch.length;
+      progressFill.style.width = `${(processed / need.length) * 100}%`;
+    } catch (e) {
+      if (e.message !== 'no key') setStatus('❌ ' + e.message);
+      btn.disabled = false; return;
+    }
+  }
+  renderTable(Object.keys(ingredientMap));
+  setStatus(`✅ Микроэлементы добавлены: ${updated} из ${need.length} записей.`);
+  btn.disabled = false;
+  if (updated >= need.length) btn.style.display = 'none';
 };
 
 function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
