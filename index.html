@@ -120,6 +120,7 @@
     .step-text{font-size:14px;line-height:1.65;color:var(--text);}
     .note-box{background:var(--warm);border-radius:12px;padding:12px 14px;margin-bottom:20px;font-size:13px;line-height:1.6;color:var(--brown);border-left:4px solid var(--amber);}
     .delete-recipe-btn{margin:0 20px 40px;padding:14px;background:none;border:2px solid #e74c3c;color:#e74c3c;border-radius:14px;width:calc(100% - 40px);font-size:15px;cursor:pointer;font-family:'Lato',sans-serif;}
+    .reassign-recipe-btn{margin:0 20px 12px;padding:14px;background:none;border:2px solid var(--amber);color:var(--amber);border-radius:14px;width:calc(100% - 40px);font-size:15px;cursor:pointer;font-family:'Lato',sans-serif;}
 
     /* ── EDITOR SCREEN ── */
     #editor-screen{display:none;min-height:100vh;flex-direction:column;}
@@ -458,6 +459,7 @@
     <div class="steps-list stagger" id="r-steps"></div>
   </div>
   <button class="cooked-btn" id="cooked-btn" onclick="markCookedCurrent()">✓ Я приготовил(а) это</button>
+  <button class="reassign-recipe-btn" id="reassign-btn" style="display:none" onclick="reassignRecipe()">🏠 Переселить в другую семью</button>
   <button class="delete-recipe-btn" onclick="deleteRecipe()">🗑 Удалить рецепт</button>
 </div>
 
@@ -577,6 +579,7 @@
       <label>Рецептов <input type="number" min="1" max="15" id="f-regular-count" placeholder="5–10"/></label>
       <button class="idea-act secondary" style="flex:1" id="regular-parse-btn" onclick="parseRegularDishes()" type="button">✨ Создать рецепты</button>
     </div>
+    <div class="mood-caption" id="regular-family-note" style="color:var(--amber)"></div>
     <div class="mood-caption" id="regular-status"></div>
     <div class="mood-caption">из описания получатся простые рецепты с тэгом «Регулярные» — они станут основой меню недели, а блюда из основной базы будут попадать в план по 2–4 в неделю</div>
     <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0 18px;cursor:pointer">
@@ -655,9 +658,10 @@ import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT
 import { buildSubMap, recipeWithSubs } from './js/substitute.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan,
-  initAuth, resolveHousehold, householdId, currentUserEmail, LEGACY_HOUSEHOLD_ID,
+  initAuth, resolveHousehold, householdId, currentUid, currentUserEmail, LEGACY_HOUSEHOLD_ID,
   signInGoogle, signInEmail, registerEmail, signOutUser,
-  createHousehold, joinHouseholdByCode, legacyHouseholdUnclaimed, claimLegacyHousehold } from './js/store.js';
+  createHousehold, joinHouseholdByCode, legacyHouseholdUnclaimed, claimLegacyHousehold,
+  findHouseholdByCode, reassignRecipeHousehold } from './js/store.js';
 import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor } from './js/planner.js';
 import { isBatchDish, mealTypesForRecipe } from './js/suggest.js';
 
@@ -1101,6 +1105,10 @@ function openRecipeInner(r) {
   const editable = canEditRecipe(r);
   document.querySelector('.edit-btn').style.display = editable ? '' : 'none';
   document.querySelector('.delete-recipe-btn').style.display = editable ? '' : 'none';
+  // Регулярный рецепт можно переселить в другую семью по коду (например,
+  // если он осел не в той семье). Только для вошедших.
+  document.getElementById('reassign-btn').style.display =
+    (isRegularRecipe(r) && currentUid()) ? '' : 'none';
 
   renderIngredients(r.ingredients, 1);
   showNutritionPanel(r); // async, updates panel when data loads
@@ -1922,6 +1930,9 @@ window.openFamily = async function() {
   document.getElementById('f-regular-count').value = '';
   document.getElementById('f-hide-regular').checked = !!household.hideRegular;
   document.getElementById('f-show-micros').checked = !!household.showMicros;
+  // в какую семью попадут регулярные — чтобы не создать их «не туда»
+  document.getElementById('regular-family-note').textContent =
+    `рецепты попадут в семью: «${household.name || 'Моя семья'}»`;
   document.getElementById('fam-subs').innerHTML = '';
   (household.substitutions?.length ? household.substitutions : []).forEach(s => addSubRow(s.from, s.to));
   const regN = allRecipes.filter(isRegularRecipe).length;
@@ -1995,6 +2006,12 @@ window.saveFamily = async function() {
 window.parseRegularDishes = async function() {
   const text = document.getElementById('f-regular').value.trim();
   const status = document.getElementById('regular-status');
+  // D: не создаём регулярные, пока семья не определена — иначе они молча
+  // осели бы в семью 'default' и стали бы невидимы для нужной семьи.
+  if (!currentUid() || !householdId()) {
+    status.textContent = '⚠️ Сначала войди в аккаунт и выбери семью — иначе рецепты уйдут не в ту семью.';
+    return;
+  }
   if (!text) { status.textContent = 'Сначала опиши привычные блюда семьи'; return; }
   let apiKey = getOpenAIKey();
   if (!apiKey) {
@@ -2035,6 +2052,31 @@ window.deleteRecipe = async function() {
   allRecipes = allRecipes.filter(r => r.id !== window.currentRecipe.id);
   window.currentRecipe = null;
   goHome();
+}
+
+// Переселить регулярный рецепт в другую семью по её коду приглашения.
+// После переселения он пропадает из этой семьи и появляется у той.
+window.reassignRecipe = async function() {
+  const r = window.currentRecipe;
+  if (!r || !isRegularRecipe(r)) return;
+  const code = prompt(`Код приглашения семьи, куда переселить «${r.title}».\nКод показан у той семьи в разделе 👪 Семья.`);
+  if (!code) return;
+  try {
+    const target = await findHouseholdByCode(code);
+    if (!target) { alert('Семья с таким кодом не найдена — проверь код.'); return; }
+    if (target.hid === (householdId() || LEGACY_HOUSEHOLD_ID)) {
+      alert('Это код текущей семьи — рецепт уже здесь.'); return;
+    }
+    if (!confirm(`Переселить «${r.title}» в семью «${target.name}»? У тебя он пропадёт.`)) return;
+    await reassignRecipeHousehold(r.id, target.hid);
+    allRecipes = allRecipes.filter(x => x.id !== r.id); // теперь чужой регулярный
+    window.currentRecipe = null;
+    alert(`Готово: «${r.title}» переселён в «${target.name}».`);
+    goHome();
+  } catch (e) {
+    console.error('reassign failed:', e);
+    alert('Не получилось переселить: ' + e.message + '\n(Возможно, нужно передеплоить firestore.rules.)');
+  }
 }
 
 // ── EDITOR ──

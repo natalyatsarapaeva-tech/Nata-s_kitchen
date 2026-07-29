@@ -104,6 +104,23 @@ export async function createHousehold(name) {
   return hid;
 }
 
+// Находит семью по коду приглашения (для переселения рецепта): {hid,name}|null.
+export async function findHouseholdByCode(rawCode) {
+  const code = normalizeJoinCode(rawCode);
+  if (code.length < 4) return null;
+  const snap = await getDocs(query(collection(db, 'households'), where('joinCode', '==', code)));
+  if (!snap.docs.length) return null;
+  const d = snap.docs[0];
+  return { hid: d.id, name: d.data().name || d.id };
+}
+
+// Переселяет регулярный рецепт в другую семью: меняет ТОЛЬКО householdId
+// (id и автора не трогает). В firestore.rules это разрешено члену текущей
+// семьи рецепта, даже если он не автор.
+export async function reassignRecipeHousehold(recipeId, hid) {
+  await setDoc(doc(db, 'recipes', recipeId), { householdId: hid }, { merge: true });
+}
+
 // Поиск семьи по коду приглашения; null — код не найден.
 export async function joinHouseholdByCode(rawCode) {
   const code = normalizeJoinCode(rawCode);
