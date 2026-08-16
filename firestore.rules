@@ -60,10 +60,12 @@ service cloud.firestore {
       // «Переселить в другую семью»: член ТЕКУЩЕЙ семьи рецепта может сменить
       // ТОЛЬКО householdId (даже не будучи автором) — чтобы вытащить рецепт,
       // осевший не в ту семью. Меняется одно поле, автор/содержимое неизменны.
+      // ВАЖНО: у старых рецептов поля householdId может НЕ быть; обращение к
+      // отсутствующему полю в правилах — ошибка (deny), поэтому только get() с
+      // дефолтом 'default' (отсутствие/старый формат = легаси-семья).
       allow update: if signedIn()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['householdId'])
-        && ((resource.data.householdId == null && myHousehold() == 'default')
-            || resource.data.householdId == myHousehold());
+        && resource.data.get('householdId', 'default') == myHousehold();
     }
 
     match /nutrition/{ingredientId} {
