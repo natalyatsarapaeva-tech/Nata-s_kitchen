@@ -198,7 +198,7 @@
 
     /* ── WEEK PLANNER ── */
     .home-actions{display:flex;gap:10px;position:relative;z-index:1;flex-wrap:wrap;}
-    #week-screen,#family-screen{display:none;min-height:100vh;flex-direction:column;}
+    #week-screen,#family-screen,#admin-screen{display:none;min-height:100vh;flex-direction:column;}
     .week-day{margin-bottom:14px;}
     .week-day-label{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--amber);font-weight:700;margin-bottom:6px;}
     .week-slot{background:var(--white);border-radius:14px;padding:10px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px var(--shadow);margin-bottom:6px;}
@@ -516,9 +516,11 @@
   <div class="recipe-body">
     <div class="week-toolbar">
       <button class="idea-act primary" onclick="generatePlanWeek()">✨ Сгенерировать</button>
+      <button class="idea-act secondary" onclick="sanityCheckWeek()">🤖 Проверить</button>
       <button class="idea-act secondary" onclick="printWeek()">🖨 На печать</button>
       <button class="idea-act secondary" onclick="clearPlanWeek()">Очистить</button>
     </div>
+    <div class="mood-caption" id="week-check-status" style="margin:-4px 0 8px"></div>
     <div id="week-grid"></div>
     <div class="week-totals" id="week-totals" style="display:none"></div>
     <div class="section-label">🛒 Список покупок</div>
@@ -612,6 +614,8 @@
 
     <button class="save-btn" onclick="saveFamily()">💾 Сохранить</button>
 
+    <button class="reassign-recipe-btn" style="margin-top:14px" onclick="openAdmin()" type="button">⚙️ Промпт проверки меню (админ)</button>
+
     <div class="onb-card" id="fam-invite-card" style="display:none">
       <h3>🔑 Пригласить в семью</h3>
       <p>Отправь этот код — по нему из своего аккаунта присоединяются к вашей семье (общие меню, покупки и история готовки):</p>
@@ -619,6 +623,24 @@
     </div>
     <div class="mood-caption" id="fam-account" style="margin-bottom:8px"></div>
     <button class="auth-btn" style="background:none;color:var(--text-soft);border:2px solid var(--warm);margin-bottom:40px" onclick="authSignOut()">🚪 Выйти из аккаунта</button>
+  </div>
+</div>
+
+<!-- ADMIN: редактируемый промпт GPT-проверки меню -->
+<div id="admin-screen">
+  <div class="recipe-header">
+    <button class="back-btn" onclick="openFamily()">← Семья</button>
+    <div class="recipe-title-big">⚙️ Админ: проверка меню</div>
+  </div>
+  <div class="editor-body">
+    <div class="mood-caption" style="margin-bottom:12px">Недельное меню собирает детерминированный алгоритм. Кнопка «🤖 Проверить» на экране недели отправляет готовое меню в GPT для проверки на разнообразие, а он возвращает слоты на замену (их перекатывает наш же алгоритм — GPT сам блюда не придумывает). Здесь можно править этот промпт. Промпт хранится в профиле семьи.</div>
+    <label class="field-label">Системный промпт проверки меню</label>
+    <textarea class="field-input" id="admin-menu-prompt" style="min-height:420px;font-family:monospace;font-size:13px;line-height:1.5"></textarea>
+    <div class="week-toolbar" style="margin-top:12px">
+      <button class="idea-act primary" onclick="saveAdmin()">💾 Сохранить промпт</button>
+      <button class="idea-act secondary" onclick="resetAdmin()">↩️ Сбросить к стандартному</button>
+    </div>
+    <div class="mood-caption" id="admin-status" style="margin-top:8px"></div>
   </div>
 </div>
 
@@ -669,6 +691,7 @@ import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, pa
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT } from './js/nutrition.js';
 import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular, filterForeignRegular } from './js/regular.js';
 import { COMBO_PROMPT, buildComboUserMsg, normalizeParsedCombo, buildComboRecipes } from './js/combo.js';
+import { DEFAULT_MENU_CHECK_PROMPT, describeWeekForCheck, buildMenuCheckUserMsg, parseMenuCheckResult } from './js/menucheck.js';
 import { buildSubMap, recipeWithSubs } from './js/substitute.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan,
@@ -1542,6 +1565,54 @@ window.weekReroll = async function(slotId) {
   renderWeek();
 }
 
+// ── GPT sanity-check меню ──
+// Меню строит детерминированный планировщик; здесь — «здравый смысл» поверх:
+// показываем GPT готовую неделю (js/menucheck.js), он отмечает слоты на замену
+// (не белок всю неделю, не киноа 5 раз, свежий завтрак если обед-разогрев), а
+// перекатывает их наш rerollSlot, соблюдающий разнообразие. Промпт берётся из
+// household.menuCheckPrompt (правится на админ-странице) или дефолтный.
+window.sanityCheckWeek = async function() {
+  const status = document.getElementById('week-check-status');
+  const slots = currentPlan?.slots || {};
+  if (Object.values(slots).filter(s => s?.recipeId).length < 2) {
+    status.textContent = 'Сначала сгенерируй неделю.'; return;
+  }
+  let apiKey = getOpenAIKey();
+  if (!apiKey) {
+    apiKey = prompt('Для проверки меню нужен OpenAI API Key (сохранится в браузере):');
+    if (!apiKey) return;
+    setOpenAIKey(apiKey);
+  }
+  const sysPrompt = (household?.menuCheckPrompt || '').trim() || DEFAULT_MENU_CHECK_PROMPT;
+  const byId = {}; allRecipes.forEach(r => byId[r.id] = r);
+  status.textContent = '⏳ Проверяю меню на разнообразие… (обычно 10–20 секунд)';
+  try {
+    const weekText = describeWeekForCheck(slots, byId);
+    const parsed = await callJsonGPT(sysPrompt, buildMenuCheckUserMsg(weekText), apiKey, 1500);
+    const { reroll, notes } = parseMenuCheckResult(parsed);
+    // не трогаем закреплённые и разогревы (привязаны к готовке)
+    const toFix = reroll.filter(id => slots[id]?.recipeId && !slots[id].locked && slots[id].kind !== 'reheat');
+    let changed = 0;
+    for (const id of toFix) {
+      const next = rerollSlot(allRecipes, profileForPlanner(), currentPlan.slots, id, ingredientDict);
+      if (!next) continue;
+      clearBatchLinks(currentPlan.slots, id);
+      currentPlan.slots[id] = next;
+      const r = allRecipes.find(x => x.id === next.recipeId);
+      applyBatchLink(currentPlan.slots, profileForPlanner(), id, r);
+      changed++;
+    }
+    if (changed) await persistPlan();
+    renderWeek();
+    status.textContent = changed
+      ? `✔ Заменено слотов: ${changed}. ${notes}`.trim()
+      : (notes ? `✔ ${notes}` : '✔ Меню разнообразное — замен не потребовалось.');
+  } catch (e) {
+    console.error('sanityCheckWeek:', e);
+    status.textContent = '😔 Не получилось: ' + e.message;
+  }
+}
+
 // ── Заметки к приёму пищи ──
 // «＋» открывает поле простого текста под слотом: гарнир, дополнительная
 // закуска, особое требование для члена семьи. Пустая заметка при потере
@@ -2019,6 +2090,33 @@ window.saveFamily = async function() {
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
+// ── АДМИН: редактируемый промпт GPT-проверки меню ──
+window.openAdmin = async function() {
+  await ensureHousehold();
+  document.getElementById('admin-menu-prompt').value =
+    (household.menuCheckPrompt || '').trim() || DEFAULT_MENU_CHECK_PROMPT;
+  document.getElementById('admin-status').textContent = '';
+  show('admin-screen');
+  window.scrollTo(0, 0);
+}
+
+window.resetAdmin = function() {
+  document.getElementById('admin-menu-prompt').value = DEFAULT_MENU_CHECK_PROMPT;
+  document.getElementById('admin-status').textContent = 'Промпт сброшен к стандартному — не забудь сохранить.';
+}
+
+window.saveAdmin = async function() {
+  const val = document.getElementById('admin-menu-prompt').value.trim();
+  const status = document.getElementById('admin-status');
+  // равно дефолту или пусто — не храним поле, используем стандартный промпт
+  if (!val || val === DEFAULT_MENU_CHECK_PROMPT) delete household.menuCheckPrompt;
+  else household.menuCheckPrompt = val;
+  try {
+    await saveHousehold(household);
+    status.textContent = '✔ Сохранено.';
+  } catch (e) { status.textContent = '😔 Ошибка: ' + e.message; }
+}
+
 // ── ПАРСЕР РЕГУЛЯРНЫХ БЛЮД ──
 // Описание привычной еды семьи → GPT → примитивные рецепты с тэгом
 // «Регулярные». Id стабильные (reg-<название>), повторный разбор
@@ -2324,7 +2422,7 @@ window.goHome = function() {
 }
 
 function show(id) {
-  ['loading','home','recipe-screen','editor-screen','idea-screen','week-screen','family-screen','auth-screen','onboarding-screen'].forEach(s => {
+  ['loading','home','recipe-screen','editor-screen','idea-screen','week-screen','family-screen','admin-screen','auth-screen','onboarding-screen'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.style.display = (s===id) ? 'flex' : 'none';
   });

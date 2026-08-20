@@ -5,7 +5,7 @@ import {
   aggregateShopping, shoppingAmountLabel, weekTotals, DAYS,
   baseWeekTarget, pickBaseSlotIds,
 } from '../js/planner.js';
-import { filterCandidates, proteinKey } from '../js/suggest.js';
+import { filterCandidates, proteinKey, sideKey } from '../js/suggest.js';
 import { buildDict } from '../js/nutrition-core.js';
 
 const NOW = Date.parse('2026-07-18T18:00:00Z');
@@ -441,7 +441,7 @@ test('generateWeek: мало регулярных — честный fallback в
 function combo(id, protein, side, cls) {
   return {
     id, title: `${protein} + ${side}`, tags: ['regular'], meta: '~30 мин',
-    combo: { protein }, attrs: { mealType: ['lunch', 'dinner'], mainProtein: cls },
+    combo: { protein, side }, attrs: { mealType: ['lunch', 'dinner'], mainProtein: cls },
     ingredients: [{ n: protein, a: '300 г' }, { n: side, a: '200 г' }],
   };
 }
@@ -461,9 +461,43 @@ const COMBO_CATALOG = [
   combo('egg', 'Омлет', 'Овощи', 'none'),
 ];
 
-test('proteinKey: комбо → белковая часть, обычный рецепт → null', () => {
+test('proteinKey/sideKey: комбо → части, обычный рецепт → null', () => {
   assert.equal(proteinKey(COMBO_CATALOG[0]), 'белая рыба на пару');
+  assert.equal(sideKey(COMBO_CATALOG[0]), 'гречка');
   assert.equal(proteinKey({ id: 'x', title: 'Суп' }), null);
+  assert.equal(sideKey({ id: 'x', title: 'Суп' }), null);
+});
+
+test('generateWeek: один гарнир не повторяется свежим (глюк 5× киноа)', () => {
+  // много белков, но почти все с киноа — раньше киноа лезла в каждый слот
+  const catalog = [
+    combo('a', 'Курица', 'Киноа', 'chicken'),
+    combo('b', 'Индейка', 'Киноа', 'chicken'),
+    combo('c', 'Котлеты', 'Киноа', 'beef'),
+    combo('d', 'Свинина', 'Киноа', 'pork'),
+    combo('e', 'Рагу из фасоли', 'Киноа', 'legumes'),
+    combo('f', 'Курица', 'Гречка', 'chicken'),
+    combo('g', 'Котлеты', 'Картошка', 'beef'),
+    combo('h', 'Свинина', 'Рис', 'pork'),
+    combo('i', 'Индейка', 'Булгур', 'chicken'),
+    combo('j', 'Рагу из фасоли', 'Капуста', 'legumes'),
+  ];
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  const slots = generateWeek(catalog, profile, {}, null, NOW, () => 0);
+  const byId = Object.fromEntries(catalog.map(r => [r.id, r]));
+  const sideCounts = {};
+  for (const s of Object.values(slots)) {
+    if (!s.recipeId || s.kind === 'reheat') continue;
+    const sk = sideKey(byId[s.recipeId]);
+    sideCounts[sk] = (sideCounts[sk] || 0) + 1;
+  }
+  assert.ok(Object.values(slots).every(s => s.recipeId), 'все слоты заполнены');
+  // 6 гарниров на 7 слотов при 5 белках: киноа больше не лезет в каждый слот.
+  // Идеала «ровно 1» тут не выжать (после исчерпания белков один гарнир
+  // повторяется), но 5× превращается в максимум 2×.
+  assert.ok(sideCounts['киноа'] <= 2, 'киноа максимум дважды, не 5: ' + JSON.stringify(sideCounts));
+  assert.ok(Object.values(sideCounts).every(c => c <= 2),
+    'гарниры разнесены, ни один не залипает: ' + JSON.stringify(sideCounts));
 });
 
 test('generateWeek: один белок не повторяется свежим (глюк 4× рыбы)', () => {
