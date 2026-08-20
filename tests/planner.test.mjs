@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   weekStartISO, buildSlots, generateWeek, rerollSlot,
   aggregateShopping, shoppingAmountLabel, weekTotals, DAYS,
-  baseWeekTarget, pickBaseSlotIds, dayHasReheat, pickReheatSource,
+  baseWeekTarget, pickBaseSlotIds, dayHasReheat, pickReheatSource, baseDinnersSetting,
 } from '../js/planner.js';
 import { filterCandidates, proteinKey, sideKey } from '../js/suggest.js';
 import { buildDict } from '../js/nutrition-core.js';
@@ -454,6 +454,34 @@ test('generateWeek: регулярные — основа, базовых ров
   const baseCount = ids.filter(id => id.startsWith('base')).length;
   assert.equal(baseCount, 2, 'на 7 ужинов — 2 базовых блюда');
   assert.equal(ids.filter(id => id.startsWith('reg')).length, 5, 'остальные — регулярные');
+});
+
+test('baseDinnersSetting: парсинг числа ужинов из книги', () => {
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 3 }), 3);
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 0 }), 0);
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 99 }), 7, 'потолок 7');
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: null }), null, 'null → авто');
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: '' }), null, 'пусто → авто');
+  assert.equal(baseDinnersSetting({}), null, 'нет поля → авто');
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 'мусор' }), null);
+});
+
+test('generateWeek: baseDinnersPerWeek — ровно столько ужинов из книги', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {}, baseDinnersPerWeek: 3 };
+  const slots = generateWeek(MIXED_CATALOG, profile, {}, null, NOW, () => 0);
+  const dinnerBase = Object.entries(slots)
+    .filter(([id, s]) => id.endsWith('_dinner') && s.recipeId?.startsWith('base')).length;
+  assert.equal(dinnerBase, 3, 'ровно 3 ужина из книги');
+  const dinnerReg = Object.entries(slots)
+    .filter(([id, s]) => id.endsWith('_dinner') && s.recipeId?.startsWith('reg')).length;
+  assert.equal(dinnerReg, 4, 'остальные 4 ужина — регулярные');
+});
+
+test('generateWeek: baseDinnersPerWeek=0 — недели без блюд из книги', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {}, baseDinnersPerWeek: 0 };
+  const slots = generateWeek(MIXED_CATALOG, profile, {}, null, NOW, () => 0);
+  const baseCount = Object.values(slots).filter(s => s.recipeId?.startsWith('base')).length;
+  assert.equal(baseCount, 0, 'ни одного базового блюда');
 });
 
 test('generateWeek: залоченные базовые расходуют базовый лимит', () => {

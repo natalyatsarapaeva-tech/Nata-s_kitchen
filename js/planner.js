@@ -75,8 +75,9 @@ export function pickReheatSource(slotsMap, slotId) {
 // ── Регулярные блюда как основа недели ──
 // Если в каталоге есть рецепты с тэгом «Регулярные» (созданы из описания
 // привычной еды семьи), неделя строится в основном из них, а рецепты из
-// основной базы попадают в план дозированно: 2–4 блюда в неделю,
-// равномерно распределённые по свободным слотам.
+// основной базы попадают в план дозированно: по умолчанию 2–4 блюда в неделю,
+// равномерно по свободным слотам. Семья может задать точное число ужинов из
+// книги (profile.baseDinnersPerWeek) — тогда базовые идут только в ужины.
 export const BASE_DISHES_MIN = 2;
 export const BASE_DISHES_MAX = 4;
 
@@ -85,6 +86,16 @@ export function baseWeekTarget(slotCount) {
   if (!slotCount) return 0;
   return Math.min(slotCount,
     Math.max(BASE_DISHES_MIN, Math.min(BASE_DISHES_MAX, Math.round(slotCount / 3))));
+}
+
+// Явная настройка семьи: сколько ужинов в неделю берём из кулинарной книги
+// (не регулярных). Число 0–7 → базовые блюда идут ТОЛЬКО в ужины и ровно
+// столько; null/пусто/мусор → авто (baseWeekTarget по всем слотам).
+export function baseDinnersSetting(profile) {
+  const v = profile?.baseDinnersPerWeek;
+  if (v === null || v === undefined || v === '') return null;
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n >= 0 ? Math.min(7, n) : null;
 }
 
 // Равномерно выбирает n слотов под «базовые» блюда из списка свободных.
@@ -145,15 +156,27 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
   const regularPool = recipes.filter(isRegularRecipe);
   const basePool = recipes.filter(r => !isRegularRecipe(r));
   const mixActive = regularPool.length > 0 && basePool.length > 0;
+  // Явное число ужинов из книги: жёсткая квота именно на ужины.
+  const explicitDinners = mixActive ? baseDinnersSetting(profile) : null;
   let baseSlotSet = new Set();
   if (mixActive) {
-    const lockedBase = slots.filter(s => {
+    const isBaseCook = s => {
       const slot = out[s.id];
       const r = slot?.recipeId ? byId[slot.recipeId] : null;
       return r && slot.kind !== 'reheat' && !isRegularRecipe(r);
-    }).length;
-    const freeIds = slots.filter(s => !out[s.id]).map(s => s.id);
-    baseSlotSet = pickBaseSlotIds(freeIds, baseWeekTarget(slots.length) - lockedBase);
+    };
+    if (explicitDinners !== null) {
+      // семья задала число ужинов из книги: базовые — только в ужины, ровно
+      // столько (минус уже залоченные базовые ужины)
+      const lockedBaseDinners = slots.filter(s => s.meal === 'dinner' && isBaseCook(s)).length;
+      const freeDinnerIds = slots.filter(s => s.meal === 'dinner' && !out[s.id]).map(s => s.id);
+      baseSlotSet = pickBaseSlotIds(freeDinnerIds, explicitDinners - lockedBaseDinners);
+    } else {
+      // авто: 2–4 базовых равномерно по всем свободным слотам
+      const lockedBase = slots.filter(isBaseCook).length;
+      const freeIds = slots.filter(s => !out[s.id]).map(s => s.id);
+      baseSlotSet = pickBaseSlotIds(freeIds, baseWeekTarget(slots.length) - lockedBase);
+    }
   }
 
   // Квоты ужинов: залоченные ужины уже расходуют свою квоту
@@ -188,7 +211,11 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     // Пул слота: в смешанном режиме регулярные — везде, кроме выделенных
     // «базовых» слотов; второй пул — честный fallback, если в первом пусто.
     const pool = mixActive ? (baseSlotSet.has(s.id) ? basePool : regularPool) : recipes;
-    const altPool = mixActive ? (baseSlotSet.has(s.id) ? regularPool : basePool) : null;
+    // При явной квоте ужинов кросс-пул для УЖИНОВ отключаем: иначе базовые
+    // подмешивались бы в регулярные ужины (или наоборот) через fallback и
+    // ломали бы точное число ужинов из книги. Завтрак/обед не ограничены.
+    const strictDinner = explicitDinners !== null && s.meal === 'dinner';
+    const altPool = (mixActive && !strictDinner) ? (baseSlotSet.has(s.id) ? regularPool : basePool) : null;
 
     // Свежая попытка: повтор блюда ради сытности хуже, чем свежее без неё
     const freshFrom = (list, opts) => {
