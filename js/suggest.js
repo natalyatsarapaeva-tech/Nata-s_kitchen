@@ -156,6 +156,16 @@ export function proteinClass(r) {
   return 'veg';
 }
 
+// Ключ «белкового приёма» — конкретная белковая часть блюда. Для комбо-рецептов
+// («Белок + гарнир», см. combo.js) это сам белок: одну и ту же белую рыбу на
+// пару нельзя готовить свежей несколько раз за неделю только из-за разных
+// гарниров. Для обычных рецептов ключа нет (null) — одинаковые рецепты и так
+// не повторяются по id, а «белковый приём» произвольного блюда неопределим.
+export function proteinKey(r) {
+  const p = r?.combo?.protein;
+  return p ? normalizeIngName(p) : null;
+}
+
 // ── Батч-блюда: «готовим один раз — едим три раза» ──
 // Ужин сегодня + обед/ужин завтра + 1 порция в заморозку. Список форматов
 // задан пользователем; детекция по названию блюда + сигналам ингредиентов.
@@ -243,6 +253,13 @@ export function filterCandidates(recipes, opts) {
       if (effectiveHeaviness(r, opts.dict || null) !== MOOD_TO_HEAVINESS[opts.mood]) return false;
     }
     if (opts.protein && proteinClass(r) !== opts.protein) return false;
+    // Белковый приём уже занят на этой неделе (комбо с той же белковой частью) —
+    // не готовим его свежим снова; второй раз он попадает в меню только как
+    // разогрев вчерашнего (тот же рецепт, ставится напрямую, минуя фильтр).
+    if (opts.excludeProteins?.size) {
+      const pk = proteinKey(r);
+      if (pk && opts.excludeProteins.has(pk)) return false;
+    }
     if (opts.want?.length) {
       if (matchWantedIngredients(r, opts.want).length < wantedThreshold(opts.want.length)) return false;
     }
