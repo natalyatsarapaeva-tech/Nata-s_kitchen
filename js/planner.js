@@ -46,6 +46,32 @@ export function findReheatSlotId(profile, cookSlotId) {
   return null;
 }
 
+// Есть ли в этот день уже разогрев (кроме опционально исключённого слота).
+// Два разогрева в один день не ставим — иначе день целиком из вчерашнего.
+export function dayHasReheat(slotsMap, day, exceptSlotId = null) {
+  return ['breakfast', 'lunch', 'dinner'].some(m => {
+    const id = `${day}_${m}`;
+    return id !== exceptSlotId && slotsMap?.[id]?.kind === 'reheat';
+  });
+}
+
+// Что «вчерашнее» можно разогреть в слоте slotId: приготовленное (не разогрев)
+// блюдо предыдущего дня, предпочтительно ужин → обед → завтрак. Null, если
+// вчерашнего дня нет (понедельник) или там нечего разогревать.
+export function pickReheatSource(slotsMap, slotId) {
+  const [day] = slotId.split('_');
+  const idx = DAYS.indexOf(day);
+  if (idx <= 0) return null;
+  const prevDay = DAYS[idx - 1];
+  for (const m of ['dinner', 'lunch', 'breakfast']) {
+    const s = slotsMap?.[`${prevDay}_${m}`];
+    if (s?.recipeId && s.kind !== 'reheat') {
+      return { sourceSlotId: `${prevDay}_${m}`, recipeId: s.recipeId };
+    }
+  }
+  return null;
+}
+
 // ── Регулярные блюда как основа недели ──
 // Если в каталоге есть рецепты с тэгом «Регулярные» (созданы из описания
 // привычной еды семьи), неделя строится в основном из них, а рецепты из
@@ -230,9 +256,11 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
       if (reheatId && !out[reheatId]) {
         // разогрев в ужин тоже расходует квоту класса; если квота исчерпана —
         // разогрев не ставим (порции уходят в заморозку)
-        const rMeal = reheatId.split('_')[1];
+        const [rDay, rMeal] = reheatId.split('_');
         const cls = proteinClass(r);
-        const allowed = rMeal !== 'dinner' || !quotaActive || quota[cls] >= 1;
+        // не больше одного разогрева в день и учёт квоты класса для ужина
+        const allowed = !dayHasReheat(out, rDay)
+          && (rMeal !== 'dinner' || !quotaActive || quota[cls] >= 1);
         if (allowed) {
           out[reheatId] = { recipeId: r.id, locked: false, kind: 'reheat', linkedTo: s.id };
           if (rMeal === 'dinner' && quotaActive && quota[cls] > 0) quota[cls]--;
@@ -257,7 +285,9 @@ export function applyBatchLink(slotsMap, profile, cookSlotId, recipe) {
   slotsMap[cookSlotId] = { ...slotsMap[cookSlotId], kind: 'batch' };
   const reheatId = findReheatSlotId(profile, cookSlotId);
   const target = reheatId ? slotsMap[reheatId] : null;
-  if (reheatId && (!target || (!target.recipeId && !target.locked))) {
+  const rDay = reheatId ? reheatId.split('_')[0] : null;
+  // не ставим второй разогрев в тот же день
+  if (reheatId && (!target || (!target.recipeId && !target.locked)) && !dayHasReheat(slotsMap, rDay, reheatId)) {
     slotsMap[reheatId] = { recipeId: recipe.id, locked: false, kind: 'reheat', linkedTo: cookSlotId };
   }
   return slotsMap;

@@ -208,6 +208,8 @@
     .ws-emoji{font-size:24px;flex-shrink:0;}
     .ws-info{flex:1;min-width:0;cursor:pointer;}
     .ws-title{font-size:14px;font-weight:500;color:var(--text);line-height:1.3;}
+    .ws-note-add{background:none;border:none;cursor:pointer;font-size:12px;padding:0 2px;opacity:.55;line-height:1;vertical-align:baseline;}
+    .ws-note-add:active{transform:scale(.9);}
     .ws-kcal{font-size:11px;color:var(--text-soft);margin-top:2px;}
     .ws-empty{font-size:13px;color:var(--text-soft);font-style:italic;}
     .ws-actions{display:grid;grid-template-columns:repeat(2,30px);gap:2px;flex-shrink:0;}
@@ -699,7 +701,7 @@ import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates,
   signInGoogle, signInEmail, registerEmail, signOutUser,
   createHousehold, joinHouseholdByCode, legacyHouseholdUnclaimed, claimLegacyHousehold,
   findHouseholdByCode, reassignRecipeHousehold } from './js/store.js';
-import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor } from './js/planner.js';
+import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor, pickReheatSource, dayHasReheat } from './js/planner.js';
 import { isBatchDish, mealTypesForRecipe } from './js/suggest.js';
 
 // ── STATE ──
@@ -1642,6 +1644,23 @@ window.weekRemove = async function(slotId) {
   renderWeek();
 }
 
+// «♨ Разогреть»: подставить в слот вчерашнее приготовленное блюдо как разогрев.
+// Двух разогревов в один день не делаем.
+window.weekReheat = async function(slotId) {
+  currentPlan.slots = currentPlan.slots || {};
+  const day = slotId.split('_')[0];
+  if (dayHasReheat(currentPlan.slots, day, slotId)) {
+    alert('В этот день уже есть разогрев — двух разогревов в один день не делаем.');
+    return;
+  }
+  const src = pickReheatSource(currentPlan.slots, slotId);
+  if (!src) { alert('Нет вчерашнего приготовленного блюда, чтобы разогреть.'); return; }
+  clearBatchLinks(currentPlan.slots, slotId); // если этот слот был готовкой — снять его разогревы
+  currentPlan.slots[slotId] = { recipeId: src.recipeId, locked: true, kind: 'reheat', linkedTo: src.sourceSlotId };
+  await persistPlan();
+  renderWeek();
+}
+
 window.weekOpen = function(rid) {
   const r = allRecipes.find(x => x.id === rid);
   if (r) openRecipe(r, 'week');
@@ -1688,12 +1707,12 @@ function renderSlot(s, byId) {
     return `<div class="week-slot">
       <div class="ws-info">
         <div class="ws-mealtag">${MEAL_LABELS[s.meal]}</div>
-        <div class="ws-empty">пусто</div>
+        <div class="ws-empty">пусто <button class="ws-note-add" onclick="weekAddNote('${s.id}')" title="Добавить комментарий">💬</button></div>
       </div>
       <div class="ws-actions">
         <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Подобрать">🎲</button>
         <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button>
-        <button class="ws-btn" onclick="weekAddNote('${s.id}')" title="Добавить заметку">＋</button>
+        <button class="ws-btn" onclick="weekReheat('${s.id}')" title="Разогреть вчерашнее">♨</button>
       </div></div>` + renderSlotNote(s.id);
   }
   const { perServing, totals, hasData } = computeRecipeNutrition(r, ingredientDict);
@@ -1711,11 +1730,11 @@ function renderSlot(s, byId) {
     <span class="ws-emoji">${slot.kind === 'reheat' ? '♨' : escHtml(r.emoji || '🍽️')}</span>
     <div class="ws-info" onclick="weekOpen('${escHtml(r.id)}')">
       <div class="ws-mealtag">${MEAL_LABELS[s.meal]}</div>
-      <div class="ws-title">${escHtml(r.title)}</div>
+      <div class="ws-title">${escHtml(r.title)} <button class="ws-note-add" onclick="event.stopPropagation();weekAddNote('${s.id}')" title="Добавить комментарий">💬</button></div>
       ${subLine ? `<div class="ws-kcal">${subLine}</div>` : ''}
     </div>
     <div class="ws-actions">
-      <button class="ws-btn" onclick="weekAddNote('${s.id}')" title="Добавить заметку">＋</button>
+      <button class="ws-btn" onclick="weekReheat('${s.id}')" title="Разогреть вчерашнее">♨</button>
       <button class="ws-btn" onclick="weekReroll('${s.id}')" title="Другой вариант">🎲</button>
       <button class="ws-btn" onclick="openPicker('${s.id}')" title="Выбрать вручную">🔍</button>
       <button class="ws-btn" onclick="weekRemove('${s.id}')" title="Убрать">✖</button>
