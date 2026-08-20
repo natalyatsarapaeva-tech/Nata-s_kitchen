@@ -5,7 +5,7 @@ import {
   aggregateShopping, shoppingAmountLabel, weekTotals, DAYS,
   baseWeekTarget, pickBaseSlotIds,
 } from '../js/planner.js';
-import { filterCandidates } from '../js/suggest.js';
+import { filterCandidates, proteinKey } from '../js/suggest.js';
 import { buildDict } from '../js/nutrition-core.js';
 
 const NOW = Date.parse('2026-07-18T18:00:00Z');
@@ -433,6 +433,75 @@ test('generateWeek: мало регулярных — честный fallback в
   const ids = Object.values(slots).map(s => s.recipeId);
   assert.ok(ids.every(Boolean), 'все слоты заполнены');
   assert.ok(ids.includes('reg0'), 'единственное регулярное блюдо использовано');
+});
+
+// ── Один белковый приём не готовим свежим несколько раз за неделю ──
+// Комбо-рецепт «Белок + гарнир»: одна и та же белая рыба на пару с разными
+// гарнирами — это один белковый приём, а не четыре разных блюда.
+function combo(id, protein, side, cls) {
+  return {
+    id, title: `${protein} + ${side}`, tags: ['regular'], meta: '~30 мин',
+    combo: { protein }, attrs: { mealType: ['lunch', 'dinner'], mainProtein: cls },
+    ingredients: [{ n: protein, a: '300 г' }, { n: side, a: '200 г' }],
+  };
+}
+
+const COMBO_CATALOG = [
+  combo('f-gr', 'Белая рыба на пару', 'Гречка', 'fish'),
+  combo('f-ka', 'Белая рыба на пару', 'Картошка', 'fish'),
+  combo('f-ri', 'Белая рыба на пару', 'Рис', 'fish'),
+  combo('f-cap', 'Белая рыба на пару', 'Капуста', 'fish'),
+  combo('c-gr', 'Курица', 'Гречка', 'chicken'),
+  combo('c-ka', 'Курица', 'Картошка', 'chicken'),
+  combo('ind', 'Индейка', 'Рис', 'chicken'),
+  combo('kot', 'Котлеты', 'Гречка', 'beef'),
+  combo('svin', 'Свинина', 'Картошка', 'pork'),
+  combo('fas', 'Рагу из фасоли', 'Капуста', 'legumes'),
+  combo('gov', 'Стейк из говядины', 'Гречка', 'beef'),
+  combo('egg', 'Омлет', 'Овощи', 'none'),
+];
+
+test('proteinKey: комбо → белковая часть, обычный рецепт → null', () => {
+  assert.equal(proteinKey(COMBO_CATALOG[0]), 'белая рыба на пару');
+  assert.equal(proteinKey({ id: 'x', title: 'Суп' }), null);
+});
+
+test('generateWeek: один белок не повторяется свежим (глюк 4× рыбы)', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  const slots = generateWeek(COMBO_CATALOG, profile, {}, null, NOW, () => 0);
+  const byId = Object.fromEntries(COMBO_CATALOG.map(r => [r.id, r]));
+  const counts = {};
+  for (const s of Object.values(slots)) {
+    if (!s.recipeId || s.kind === 'reheat') continue;
+    const pk = proteinKey(byId[s.recipeId]);
+    counts[pk] = (counts[pk] || 0) + 1;
+  }
+  assert.ok(Object.values(slots).every(s => s.recipeId), 'все 7 слотов заполнены');
+  // 10 белковых групп-приёмов на 7 слотов — каждый белок свежим не больше раза
+  assert.equal(counts['белая рыба на пару'], 1, 'рыба ровно один раз, не 4');
+  assert.ok(Object.values(counts).every(c => c <= 1),
+    'ни один белковый приём не повторяется свежим: ' + JSON.stringify(counts));
+});
+
+test('generateWeek: только один белок в каталоге — слоты не пустуют (резерв)', () => {
+  const onlyFish = COMBO_CATALOG.filter(r => r.id.startsWith('f-'));
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  const slots = generateWeek(onlyFish, profile, {}, null, NOW, () => 0);
+  assert.ok(Object.values(slots).every(s => s.recipeId),
+    'когда альтернатив нет, ограничение снимается и дыр в меню не остаётся');
+});
+
+test('rerollSlot: не подставляет белок, уже занятый в других слотах', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  // почти вся неделя — курица/индейка/мясо/фасоль; свободный слот не должен
+  // стать рыбой, если рыба уже стоит в другом слоте
+  const slots = {
+    mon_dinner: { recipeId: 'f-gr' }, // белая рыба уже здесь
+    tue_dinner: { recipeId: 'c-gr' },
+  };
+  const next = rerollSlot(COMBO_CATALOG, profile, slots, 'wed_dinner', null, NOW, () => 0);
+  assert.notEqual(proteinKey(COMBO_CATALOG.find(r => r.id === next.recipeId)),
+    'белая рыба на пару', 'рыбу второй раз свежей не ставим');
 });
 
 test('rerollSlot: происхождение блюда сохраняется', () => {

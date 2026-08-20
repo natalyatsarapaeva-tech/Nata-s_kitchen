@@ -121,6 +121,7 @@
     .note-box{background:var(--warm);border-radius:12px;padding:12px 14px;margin-bottom:20px;font-size:13px;line-height:1.6;color:var(--brown);border-left:4px solid var(--amber);}
     .delete-recipe-btn{margin:0 20px 40px;padding:14px;background:none;border:2px solid #e74c3c;color:#e74c3c;border-radius:14px;width:calc(100% - 40px);font-size:15px;cursor:pointer;font-family:'Lato',sans-serif;}
     .reassign-recipe-btn{margin:0 20px 12px;padding:14px;background:none;border:2px solid var(--amber);color:var(--amber);border-radius:14px;width:calc(100% - 40px);font-size:15px;cursor:pointer;font-family:'Lato',sans-serif;}
+    .clear-regular-btn{padding:10px 14px;background:none;border:2px solid #e74c3c;color:#e74c3c;border-radius:12px;width:100%;font-size:14px;cursor:pointer;font-family:'Lato',sans-serif;}
 
     /* ── EDITOR SCREEN ── */
     #editor-screen{display:none;min-height:100vh;flex-direction:column;}
@@ -419,6 +420,9 @@
     <button class="tab" onclick="filterCards('icecream',event)">🍦 Мороженое</button>
     <button class="tab" onclick="filterCards('regular',event)">🔁 Регулярные</button>
   </div>
+  <div id="regular-actions" style="display:none;padding:10px 20px 0">
+    <button class="clear-regular-btn" onclick="clearAllRegular()" type="button">🗑 Очистить все регулярные рецепты</button>
+  </div>
   <div class="cards-grid stagger" id="cards-grid"></div>
   <div class="fab-group">
     <a class="fab-camera" href="nutrition.html" title="База калорийности" style="background:var(--brown-light)">🥗</a>
@@ -590,10 +594,11 @@
     <div class="mood-caption" id="combo-status"></div>
     <div class="mood-caption">из того же описания ассистент сам выделит белок и гарнир (даже если блюда названы вместе — «гречка с курицей») и соберёт разнообразные пары, чтобы чередовать злаки, овощи и виды белка. Правила: рыба не идёт с пастой, к бобовым нужны овощи (а не крупы/картошка). Получатся регулярные рецепты вида «Курица + гречка».</div>
 
-    <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0 18px;cursor:pointer">
+    <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0 12px;cursor:pointer">
       <input type="checkbox" id="f-hide-regular" style="width:18px;height:18px;accent-color:var(--amber)"/>
       Скрывать регулярные из общего списка рецептов
     </label>
+    <button class="clear-regular-btn" style="margin-bottom:18px" onclick="clearAllRegular()" type="button">🗑 Очистить все регулярные рецепты</button>
 
     <label class="field-label">🔄 Замены продуктов (только для этой семьи)</label>
     <div id="fam-subs"></div>
@@ -839,6 +844,10 @@ window.renderCards = function() {
   grid.innerHTML = '';
   const list = getFiltered();
   document.getElementById('count-label').textContent = list.length + ' рецептов';
+  // «очистить все регулярные» — только на своём табе и только когда есть что чистить
+  const regActions = document.getElementById('regular-actions');
+  if (regActions) regActions.style.display =
+    (currentFilter === 'regular' && list.length && currentUid()) ? '' : 'none';
   if (!list.length) { grid.innerHTML = '<div class="no-results">🍽️ Ничего не найдено</div>'; return; }
   list.forEach(r => {
     const btn = document.createElement('button');
@@ -2114,6 +2123,32 @@ window.deleteRecipe = async function() {
   allRecipes = allRecipes.filter(r => r.id !== window.currentRecipe.id);
   window.currentRecipe = null;
   goHome();
+}
+
+// Удалить сразу все регулярные рецепты семьи (и обычные привычные, и комбо
+// «Белок + гарнир»). Удаляются только те, что семья вправе править (свои);
+// чужие легаси остаются. Вызывается с таба «Регулярные» и из экрана «Семья».
+window.clearAllRegular = async function() {
+  const regs = allRecipes.filter(r => isRegularRecipe(r) && canEditRecipe(r));
+  if (!regs.length) { alert('Регулярных рецептов нет.'); return; }
+  if (!confirm(`Удалить все регулярные рецепты (${regs.length})? Это нельзя отменить.`)) return;
+  let removed = 0;
+  for (const r of regs) {
+    try {
+      await deleteDoc(doc(db, 'recipes', r.id));
+      allRecipes = allRecipes.filter(x => x.id !== r.id);
+      removed++;
+    } catch (e) { console.error('clearAllRegular: не удалось удалить', r.id, e); }
+  }
+  renderCards();
+  // счётчик в экране «Семья», если он открыт
+  const rs = document.getElementById('regular-status');
+  if (rs) rs.textContent = removed ? `удалено регулярных рецептов: ${removed}` : '';
+  const cs = document.getElementById('combo-status');
+  if (cs) cs.textContent = '';
+  if (removed < regs.length) {
+    alert(`Удалено ${removed} из ${regs.length}. Часть рецептов создана другим членом семьи — их может удалить только автор.`);
+  }
 }
 
 // Переселить регулярный рецепт в другую семью по её коду приглашения.
