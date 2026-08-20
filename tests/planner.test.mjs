@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   weekStartISO, buildSlots, generateWeek, rerollSlot,
   aggregateShopping, shoppingAmountLabel, weekTotals, DAYS,
-  baseWeekTarget, pickBaseSlotIds,
+  baseWeekTarget, pickBaseSlotIds, dayHasReheat, pickReheatSource,
 } from '../js/planner.js';
 import { filterCandidates, proteinKey, sideKey } from '../js/suggest.js';
 import { buildDict } from '../js/nutrition-core.js';
@@ -187,6 +187,55 @@ test('generateWeek: батч-блюдо занимает разогрев сле
   const [cd] = cookId.split('_'); const [rd, rm] = reheatId.split('_');
   assert.equal(DAYS.indexOf(rd), DAYS.indexOf(cd) + 1);
   assert.equal(rm, 'lunch');
+});
+
+test('dayHasReheat: один разогрев в день', () => {
+  const slots = {
+    tue_lunch: { recipeId: 'g', kind: 'reheat' },
+    tue_dinner: { recipeId: 'x' },
+    wed_lunch: { recipeId: 'y' },
+  };
+  assert.equal(dayHasReheat(slots, 'tue'), true);
+  assert.equal(dayHasReheat(slots, 'wed'), false);
+  // текущий слот можно исключить (мы его как раз переназначаем)
+  assert.equal(dayHasReheat(slots, 'tue', 'tue_lunch'), false);
+});
+
+test('pickReheatSource: вчерашнее — ужин → обед → завтрак, не разогрев', () => {
+  const slots = {
+    mon_lunch: { recipeId: 'l' },
+    mon_dinner: { recipeId: 'd' },
+    tue_lunch: { recipeId: 'tl' },
+  };
+  // для вторника берём вчерашний ужин
+  assert.deepEqual(pickReheatSource(slots, 'tue_dinner'), { sourceSlotId: 'mon_dinner', recipeId: 'd' });
+  // понедельник — вчерашнего дня нет
+  assert.equal(pickReheatSource(slots, 'mon_dinner'), null);
+  // если вчерашний ужин сам разогрев — берём обед
+  const s2 = { mon_lunch: { recipeId: 'l' }, mon_dinner: { recipeId: 'd', kind: 'reheat' } };
+  assert.deepEqual(pickReheatSource(s2, 'tue_lunch'), { sourceSlotId: 'mon_lunch', recipeId: 'l' });
+  // вчерашний день пустой — null
+  assert.equal(pickReheatSource({}, 'tue_lunch'), null);
+});
+
+test('generateWeek: не больше одного разогрева в день', () => {
+  // несколько батч-рагу подряд могли бы навесить два разогрева на один день
+  const catalog = [
+    ...['Гуляш', 'Рагу из говядины', 'Мясное карри', 'Бефстроганов'].map((t, i) => ({
+      id: `stew${i}`, title: t, tags: ['meat'], meta: '~90 мин',
+      lastCookedAt: new Date(NOW - (60 - i) * 86400000).toISOString(),
+      ingredients: [{ n: 'Говядина', a: '500 г', qty: 500, unit: 'g', ing: 'говядина' }] })),
+    ...Array.from({ length: 6 }, (_, i) => ({
+      id: `v${i}`, title: `Овощи ${i}`, tags: ['veggie'], meta: '~20 мин',
+      ingredients: [{ n: `Овощ${i}`, a: '100 г' }] })),
+  ];
+  const profile = { planMeals: ['lunch', 'dinner'], weekendFull: false, rhythm: {}, members: [{ name: 'а', coeff: 1 }] };
+  const slots = generateWeek(catalog, profile, {}, null, NOW, () => 0);
+  for (const day of DAYS) {
+    const reheats = ['breakfast', 'lunch', 'dinner']
+      .filter(m => slots[`${day}_${m}`]?.kind === 'reheat').length;
+    assert.ok(reheats <= 1, `у ${day} разогревов ${reheats}, должно быть ≤1`);
+  }
 });
 
 test('aggregateShopping: разогрев не дублирует закупку, батч умножает', async () => {
