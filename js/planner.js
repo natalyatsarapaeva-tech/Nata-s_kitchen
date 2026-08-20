@@ -1,6 +1,6 @@
 // Недельный планировщик: чистые функции (без Firebase) — тестируются в Node.
 // Заполнение сетки использует тот же скоринг, что и «Что приготовить?».
-import { pickSuggestion, isBatchDish, proteinClass, proteinKey, effectiveHeaviness } from './suggest.js';
+import { pickSuggestion, isBatchDish, proteinClass, proteinKey, sideKey, effectiveHeaviness } from './suggest.js';
 import { expandIngredients, dictLookup, entryKey, gramsForEntry, computeRecipeNutrition, DEFAULT_UNIT_G } from './nutrition-core.js';
 import { isRegularRecipe } from './regular.js';
 
@@ -91,10 +91,12 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
   const exclude = profile?.exclude || [];
   const out = {};
   const used = [];
-  // Белковые приёмы, уже занятые свежей готовкой на этой неделе: один и тот же
-  // белок (комбо с той же белковой частью) не готовим свежим дважды — второй
-  // раз он попадает только разогревом (тот же рецепт). См. proteinKey.
+  // Белковые приёмы и гарниры, уже занятые свежей готовкой на этой неделе:
+  // один и тот же белок или гарнир (комбо) не готовим свежим повторно —
+  // чтобы не было ни говядины всю неделю, ни киноа в каждом слоте. Второй раз
+  // блюдо попадает только разогревом (тот же рецепт). См. proteinKey/sideKey.
   const usedProteins = new Set();
+  const usedSides = new Set();
   const byId = {};
   recipes.forEach(r => byId[r.id] = r);
 
@@ -106,6 +108,8 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
       if (prev.kind !== 'reheat') {
         const pk = proteinKey(byId[prev.recipeId]);
         if (pk) usedProteins.add(pk);
+        const sk = sideKey(byId[prev.recipeId]);
+        if (sk) usedSides.add(sk);
       }
     }
   }
@@ -153,7 +157,7 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
       continue;
     }
     const maxMin = s.meal === 'dinner' ? (profile?.rhythm?.[s.day] ?? null) : null;
-    const base = { meal: s.meal, maxMin, exclude, dict, excludeProteins: usedProteins };
+    const base = { meal: s.meal, maxMin, exclude, dict, excludeProteins: usedProteins, excludeSides: usedSides };
 
     // Пул слота: в смешанном режиме регулярные — везде, кроме выделенных
     // «базовых» слотов; второй пул — честный fallback, если в первом пусто.
@@ -193,9 +197,18 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     }
     if (!res) res = freshFrom(pool, base);
     if (!res && altPool) res = freshFrom(altPool, base);
-    // Последний резерв: слот не должен пустовать, поэтому ограничение по
-    // белковому приёму здесь снимается (лучше повтор белка, чем дыра в меню).
-    const anyBase = { ...base, excludeProteins: null };
+    // Ступенчатый откат: если разнообразных пар не нашлось, ослабляем
+    // ограничения по одному, а не оба разом — иначе нехватка гарниров
+    // (мало круп) заодно разрешала бы повтор белка. Сначала жертвуем
+    // гарниром (сохраняя разнообразие белка), потом наоборот.
+    const noSides = { ...base, excludeSides: null };
+    if (!res) res = freshFrom(pool, noSides);
+    if (!res && altPool) res = freshFrom(altPool, noSides);
+    const noProteins = { ...base, excludeProteins: null };
+    if (!res) res = freshFrom(pool, noProteins);
+    if (!res && altPool) res = freshFrom(altPool, noProteins);
+    // Последний резерв: слот не должен пустовать — снимаем оба ограничения.
+    const anyBase = { ...base, excludeProteins: null, excludeSides: null };
     if (!res) res = pickSuggestion(pool, anyBase, [...used], now, rand);
     if (!res && altPool) res = pickSuggestion(altPool, anyBase, [...used], now, rand);
     if (!res) { out[s.id] = { recipeId: null, locked: false }; continue; }
@@ -208,6 +221,8 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     used.push(r.id);
     const rpk = proteinKey(r);
     if (rpk) usedProteins.add(rpk);
+    const rsk = sideKey(r);
+    if (rsk) usedSides.add(rsk);
 
     if (isBatchDish(r)) {
       out[s.id].kind = 'batch';
@@ -273,16 +288,19 @@ export function rerollSlot(recipes, profile, slots, slotId, dict = null, now = D
   const maxMin = meal === 'dinner' ? (profile?.rhythm?.[day] ?? null) : null;
   const byId = {};
   recipes.forEach(r => byId[r.id] = r);
-  // Белковые приёмы соседних слотов (кроме разогревов) — не дублируем свежий
-  // белок при перекатке; текущий слот не в счёт, его белок как раз меняем.
+  // Белок и гарнир соседних слотов (кроме разогревов) — не дублируем свежими
+  // при перекатке; текущий слот не в счёт, его как раз меняем.
   const usedProteins = new Set();
+  const usedSides = new Set();
   for (const [id, s] of Object.entries(slots)) {
     if (id === slotId || !s?.recipeId || s.kind === 'reheat') continue;
     const pk = proteinKey(byId[s.recipeId]);
     if (pk) usedProteins.add(pk);
+    const sk = sideKey(byId[s.recipeId]);
+    if (sk) usedSides.add(sk);
   }
-  const base = { meal, maxMin, exclude: profile?.exclude || [], dict, excludeProteins: usedProteins };
-  const anyBase = { ...base, excludeProteins: null };
+  const base = { meal, maxMin, exclude: profile?.exclude || [], dict, excludeProteins: usedProteins, excludeSides: usedSides };
+  const anyBase = { ...base, excludeProteins: null, excludeSides: null };
   const cur = current ? byId[current] : null;
 
   const regularPool = recipes.filter(isRegularRecipe);

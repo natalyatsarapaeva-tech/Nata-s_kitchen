@@ -166,6 +166,14 @@ export function proteinKey(r) {
   return p ? normalizeIngName(p) : null;
 }
 
+// Ключ гарнира комбо-рецепта: конкретный гарнир (напр. «киноа»). Нужен, чтобы
+// один и тот же гарнир не попадал в неделю снова и снова — иначе киноа лезет
+// в каждый слот, потому что рецепты «Курица + киноа» и «Рыба + киноа» разные.
+export function sideKey(r) {
+  const s = r?.combo?.side;
+  return s ? normalizeIngName(s) : null;
+}
+
 // ── Батч-блюда: «готовим один раз — едим три раза» ──
 // Ужин сегодня + обед/ужин завтра + 1 порция в заморозку. Список форматов
 // задан пользователем; детекция по названию блюда + сигналам ингредиентов.
@@ -259,6 +267,11 @@ export function filterCandidates(recipes, opts) {
     if (opts.excludeProteins?.size) {
       const pk = proteinKey(r);
       if (pk && opts.excludeProteins.has(pk)) return false;
+    }
+    // Тот же гарнир уже занят на неделе — не берём его снова (борьба с «5× киноа»)
+    if (opts.excludeSides?.size) {
+      const sk = sideKey(r);
+      if (sk && opts.excludeSides.has(sk)) return false;
     }
     if (opts.want?.length) {
       if (matchWantedIngredients(r, opts.want).length < wantedThreshold(opts.want.length)) return false;
