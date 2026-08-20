@@ -217,6 +217,25 @@ test('normalizeParsedCombo: валидные компоненты, катего�
   assert.equal(out.proteins[0].servings, 4);
 });
 
+test('normalizeParsedCombo: одинаковые компоненты схлопываются', () => {
+  // блюда описаны парами, «Гречка» и «Курица» встречаются в разных блюдах —
+  // в списках должны остаться по одному разу
+  const parsed = {
+    sides: [
+      { title: 'Гречка', category: 'grain', ingredients: [{ n: 'Гречка', a: '250 г' }] },
+      { title: 'гречка', category: 'grain', ingredients: [{ n: 'Гречка', a: '200 г' }] },
+      { title: 'Картошка', category: 'potato', ingredients: [{ n: 'Картофель', a: '400 г' }] },
+    ],
+    proteins: [
+      { title: 'Курица', category: 'chicken', ingredients: [{ n: 'Курица', a: '500 г' }] },
+      { title: 'Курица', category: 'chicken', ingredients: [{ n: 'Курица', a: '400 г' }] },
+    ],
+  };
+  const out = normalizeParsedCombo(parsed);
+  assert.deepEqual(out.sides.map(s => s.title), ['Гречка', 'Картошка']);
+  assert.deepEqual(out.proteins.map(p => p.title), ['Курица']);
+});
+
 test('normalizeParsedCombo: мусор — пустые списки', () => {
   assert.deepEqual(normalizeParsedCombo(null), { sides: [], proteins: [] });
   assert.deepEqual(normalizeParsedCombo({ sides: 'нет', proteins: 5 }), { sides: [], proteins: [] });
