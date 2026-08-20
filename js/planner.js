@@ -198,15 +198,32 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     }
   }
 
+  let lastDinnerRecipe = null;
   for (const s of slots) {
     if (out[s.id]) {
       if (s.meal === 'dinner' && out[s.id].recipeId) {
         lastDinnerClass = proteinClass(byId[out[s.id].recipeId] || {});
+        lastDinnerRecipe = byId[out[s.id].recipeId] || null;
       }
       continue;
     }
     const maxMin = s.meal === 'dinner' ? (profile?.rhythm?.[s.day] ?? null) : null;
     const base = { meal: s.meal, maxMin, exclude, dict, excludeProteins: usedProteins, excludeSides: usedSides };
+
+    // По вечерам подряд не предлагаем блюда, соседние по каталогу с вчерашним
+    // ужином (±2 по алфавитному списку) — чтобы не выходило «Бефстроганов из
+    // индейки», затем «Бефстроганов из говядины». Это МЯГКОЕ предпочтение:
+    // сначала пробуем свежее без соседей, если в пуле пусто — то же свежее без
+    // ограничения (freshPool), и только потом другой пул — гард не выталкивает
+    // в чужой пул и не оставляет слот пустым.
+    const usedArr = [...used];
+    let avoidExcl = usedArr;
+    if (s.meal === 'dinner' && lastDinnerRecipe) {
+      const avoid = new Set();
+      const idx = recipes.findIndex(r => r.id === lastDinnerRecipe.id);
+      if (idx >= 0) for (const d of [-2, -1, 1, 2]) { const nb = recipes[idx + d]; if (nb) avoid.add(nb.id); }
+      if (avoid.size) avoidExcl = [...usedArr, ...avoid];
+    }
 
     // Пул слота: в смешанном режиме регулярные — везде, кроме выделенных
     // «базовых» слотов; второй пул — честный fallback, если в первом пусто.
@@ -217,13 +234,14 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
     const strictDinner = explicitDinners !== null && s.meal === 'dinner';
     const altPool = (mixActive && !strictDinner) ? (baseSlotSet.has(s.id) ? regularPool : basePool) : null;
 
-    // Свежая попытка: повтор блюда ради сытности хуже, чем свежее без неё
-    const freshFrom = (list, opts) => {
+    // Свежая попытка: повтор блюда ради сытности хуже, чем свежее без неё.
+    const freshFrom = (list, opts, excl = usedArr) => {
       if (!list?.length) return null;
-      const p = pickSuggestion(list, opts, [...used], now, rand);
+      const p = pickSuggestion(list, opts, excl, now, rand);
       return p && p.relaxed !== 'repeat' ? p : null;
     };
-    const freshPick = opts => freshFrom(pool, opts);
+    // Свежее из основного пула: сначала избегая вечерних соседей, затем без.
+    const freshPool = opts => freshFrom(pool, opts, avoidExcl) || freshFrom(pool, opts, usedArr);
 
     let res = null;
     let quotaCls = null;
@@ -232,14 +250,14 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
       if (cls) {
         if (cls === 'meat') {
           // мясной ужин: сначала нужная сытность, потом любое свежее мясо
-          res = freshPick({ ...base, protein: 'meat', mood: meatMood })
-             || freshPick({ ...base, protein: 'meat' })
+          res = freshPool({ ...base, protein: 'meat', mood: meatMood })
+             || freshPool({ ...base, protein: 'meat' })
              || freshFrom(altPool, { ...base, protein: 'meat' })
-             || pickSuggestion(pool, { ...base, protein: 'meat' }, [...used], now, rand);
+             || pickSuggestion(pool, { ...base, protein: 'meat' }, usedArr, now, rand);
         } else {
-          res = freshPick({ ...base, protein: cls })
+          res = freshPool({ ...base, protein: cls })
              || freshFrom(altPool, { ...base, protein: cls })
-             || pickSuggestion(pool, { ...base, protein: cls }, [...used], now, rand);
+             || pickSuggestion(pool, { ...base, protein: cls }, usedArr, now, rand);
         }
         if (res) {
           quotaCls = cls;
@@ -248,27 +266,27 @@ export function generateWeek(recipes, profile, existingSlots = {}, dict = null, 
         }
       }
     }
-    if (!res) res = freshFrom(pool, base);
+    if (!res) res = freshPool(base);
     if (!res && altPool) res = freshFrom(altPool, base);
     // Ступенчатый откат: если разнообразных пар не нашлось, ослабляем
     // ограничения по одному, а не оба разом — иначе нехватка гарниров
     // (мало круп) заодно разрешала бы повтор белка. Сначала жертвуем
     // гарниром (сохраняя разнообразие белка), потом наоборот.
     const noSides = { ...base, excludeSides: null };
-    if (!res) res = freshFrom(pool, noSides);
+    if (!res) res = freshPool(noSides);
     if (!res && altPool) res = freshFrom(altPool, noSides);
     const noProteins = { ...base, excludeProteins: null };
-    if (!res) res = freshFrom(pool, noProteins);
+    if (!res) res = freshPool(noProteins);
     if (!res && altPool) res = freshFrom(altPool, noProteins);
     // Последний резерв: слот не должен пустовать — снимаем оба ограничения.
     const anyBase = { ...base, excludeProteins: null, excludeSides: null };
-    if (!res) res = pickSuggestion(pool, anyBase, [...used], now, rand);
-    if (!res && altPool) res = pickSuggestion(altPool, anyBase, [...used], now, rand);
+    if (!res) res = pickSuggestion(pool, anyBase, usedArr, now, rand);
+    if (!res && altPool) res = pickSuggestion(altPool, anyBase, usedArr, now, rand);
     if (!res) { out[s.id] = { recipeId: null, locked: false }; continue; }
 
     const r = res.recipe;
     out[s.id] = { recipeId: r.id, locked: false };
-    if (s.meal === 'dinner') lastDinnerClass = proteinClass(r);
+    if (s.meal === 'dinner') { lastDinnerClass = proteinClass(r); lastDinnerRecipe = r; }
     // каталог исчерпан → новый круг анти-повторов, а не один фаворит трижды
     if (res.relaxed === 'repeat') used.length = 0;
     used.push(r.id);

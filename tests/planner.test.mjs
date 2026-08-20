@@ -189,6 +189,37 @@ test('generateWeek: батч-блюдо занимает разогрев сле
   assert.equal(rm, 'lunch');
 });
 
+// Регулярные блюда без истории готовки имеют одинаковый скор — раньше это
+// давало алфавитную выдачу; теперь случайный тай-брейк + запрет соседних.
+const ALPHA_REGULARS = Array.from({ length: 10 }, (_, i) => ({
+  id: `r${i}`, title: `Блюдо ${String.fromCharCode(97 + i)}`, tags: ['veggie', 'regular'],
+  meta: '~30 мин', ingredients: [{ n: `Овощ${i}`, a: '100 г' }],
+}));
+const lcg = seed => { let s = seed >>> 0; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; };
+
+test('generateWeek: выдача рандомная, не по алфавиту (разные seed → разный порядок)', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  const seqA = Object.values(generateWeek(ALPHA_REGULARS, profile, {}, null, NOW, lcg(1))).map(s => s.recipeId);
+  const seqB = Object.values(generateWeek(ALPHA_REGULARS, profile, {}, null, NOW, lcg(7))).map(s => s.recipeId);
+  assert.notDeepEqual(seqA, seqB, 'разные seed дают разный порядок — не фиксированный алфавит');
+  // и это не строго возрастающий по каталогу порядок r0,r1,r2…
+  const idxA = seqA.map(id => ALPHA_REGULARS.findIndex(r => r.id === id));
+  const ascending = idxA.every((v, i) => i === 0 || v > idxA[i - 1]);
+  assert.ok(!ascending, 'ужины не идут строго по порядку каталога');
+});
+
+test('generateWeek: соседние по списку блюда не идут подряд по вечерам', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  // rand=()=>0 → тай-брейк стабилен, но гард «не соседние ±2» всё равно работает
+  const slots = generateWeek(ALPHA_REGULARS, profile, {}, null, NOW, () => 0);
+  const idx = DAYS.map(d => slots[`${d}_dinner`]).filter(Boolean)
+    .map(s => ALPHA_REGULARS.findIndex(r => r.id === s.recipeId));
+  for (let i = 1; i < idx.length; i++) {
+    assert.ok(Math.abs(idx[i] - idx[i - 1]) > 2,
+      `ужины ${i - 1} и ${i} — соседние по каталогу (${idx[i - 1]}→${idx[i]})`);
+  }
+});
+
 test('dayHasReheat: один разогрев в день', () => {
   const slots = {
     tue_lunch: { recipeId: 'g', kind: 'reheat' },
