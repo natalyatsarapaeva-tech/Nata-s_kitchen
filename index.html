@@ -587,6 +587,15 @@
       Скрывать регулярные из общего списка рецептов
     </label>
 
+    <label class="field-label">🍱 Протеин + гарнир (чередуем для разнообразия)</label>
+    <textarea class="field-input" id="f-combo" style="min-height:110px" placeholder="Опиши отдельно гарниры и белок. Например: на гарнир — макароны, картофельное пюре, гречка, перловка, киноа, тушёная капуста; белок — куриные наггетсы, котлеты, рагу из фасоли, стейк из рыбы, куриные тефтели…"></textarea>
+    <div class="quota-row" style="align-items:center">
+      <label>Комбинаций <input type="number" min="1" max="30" id="f-combo-max" placeholder="все"/></label>
+      <button class="idea-act secondary" style="flex:1" id="combo-parse-btn" onclick="parseComboDishes()" type="button">✨ Собрать комбинации</button>
+    </div>
+    <div class="mood-caption" id="combo-status"></div>
+    <div class="mood-caption">гарниры и белок чередуются в меню, миксуя злаки, овощи и виды белка. Правила: рыба не идёт с пастой, к бобовым нужны овощи (а не крупы/картошка). Получатся регулярные рецепты вида «Курица + гречка» — они станут основой меню недели.</div>
+
     <label class="field-label">🔄 Замены продуктов (только для этой семьи)</label>
     <div id="fam-subs"></div>
     <button class="add-row-btn" onclick="addSubRow()">+ Добавить замену</button>
@@ -655,6 +664,7 @@ import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT } from './js/nutrition.js';
 import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular, filterForeignRegular } from './js/regular.js';
+import { COMBO_PROMPT, buildComboUserMsg, normalizeParsedCombo, buildComboRecipes } from './js/combo.js';
 import { buildSubMap, recipeWithSubs } from './js/substitute.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan,
@@ -1928,6 +1938,9 @@ window.openFamily = async function() {
   document.getElementById('f-exclude').value = household.excludeText || '';
   document.getElementById('f-regular').value = household.regularDishesText || '';
   document.getElementById('f-regular-count').value = '';
+  document.getElementById('f-combo').value = household.comboDishesText || '';
+  document.getElementById('f-combo-max').value = '';
+  document.getElementById('combo-status').textContent = '';
   document.getElementById('f-hide-regular').checked = !!household.hideRegular;
   document.getElementById('f-show-micros').checked = !!household.showMicros;
   // в какую семью попадут регулярные — чтобы не создать их «не туда»
@@ -1987,6 +2000,7 @@ window.saveFamily = async function() {
     rhythm,
     excludeText: document.getElementById('f-exclude').value.trim(),
     regularDishesText: document.getElementById('f-regular').value.trim(),
+    comboDishesText: document.getElementById('f-combo').value.trim(),
     hideRegular: document.getElementById('f-hide-regular').checked,
     substitutions,
     showMicros: document.getElementById('f-show-micros').checked,
@@ -2040,6 +2054,55 @@ window.parseRegularDishes = async function() {
     status.textContent = `✔ Готово: ${created.length} рецептов — ${created.map(r => r.title).join(', ')}`;
   } catch (e) {
     console.error('Regular parse failed:', e);
+    status.textContent = '😔 Не получилось: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+// ── ПАРСЕР «ПРОТЕИН + ГАРНИР» ──
+// Описание гарниров и белков одним текстом → GPT раскладывает на два списка →
+// детерминированная сборка допустимых пар (правила сочетаемости + чередование,
+// js/combo.js) → каждая пара сохраняется как регулярный рецепт «Белок + гарнир».
+// Планировщик уже умеет ротировать регулярные, считать покупки/КБЖУ и печатать.
+window.parseComboDishes = async function() {
+  const text = document.getElementById('f-combo').value.trim();
+  const status = document.getElementById('combo-status');
+  if (!currentUid() || !householdId()) {
+    status.textContent = '⚠️ Сначала войди в аккаунт и выбери семью — иначе рецепты уйдут не в ту семью.';
+    return;
+  }
+  if (!text) { status.textContent = 'Сначала опиши гарниры и виды белка'; return; }
+  let apiKey = getOpenAIKey();
+  if (!apiKey) {
+    apiKey = prompt('Для разбора описания нужен OpenAI API Key (сохранится в браузере):');
+    if (!apiKey) return;
+    setOpenAIKey(apiKey);
+  }
+  const maxRaw = parseInt(document.getElementById('f-combo-max').value, 10);
+  const max = maxRaw > 0 ? Math.min(30, maxRaw) : null;
+  const btn = document.getElementById('combo-parse-btn');
+  btn.disabled = true;
+  status.textContent = '⏳ Раскладываю на гарниры и белок, собираю комбинации… (обычно 10–20 секунд)';
+  try {
+    household.comboDishesText = text;
+    saveHousehold(household).catch(e => console.error('saveHousehold:', e));
+
+    const parsed = await callJsonGPT(COMBO_PROMPT, buildComboUserMsg(text), apiKey, 8000);
+    const { sides, proteins } = normalizeParsedCombo(parsed);
+    if (!sides.length || !proteins.length) {
+      throw new Error('нужны и гарниры, и белок — опиши обе части');
+    }
+    const created = buildComboRecipes(proteins, sides, { householdId: householdId(), owner: ownerId(), max });
+    if (!created.length) throw new Error('не удалось собрать ни одной допустимой комбинации');
+    for (const r of created) {
+      await setDoc(doc(db, 'recipes', r.id), r);
+      const idx = allRecipes.findIndex(x => x.id === r.id);
+      if (idx >= 0) allRecipes[idx] = r; else allRecipes.push(r);
+    }
+    allRecipes.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'ru'));
+    status.textContent = `✔ Готово: ${created.length} комбинаций (${proteins.length} белк. × ${sides.length} гарн.) — ${created.map(r => r.title).join(', ')}`;
+  } catch (e) {
+    console.error('Combo parse failed:', e);
     status.textContent = '😔 Не получилось: ' + e.message;
   }
   btn.disabled = false;
