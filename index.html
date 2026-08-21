@@ -578,6 +578,10 @@
     </div>
     <div class="mood-caption">мясные ужины чередуются: обычный → сытный → обычный…</div>
 
+    <label class="field-label" style="margin-top:14px">Ужинов из кулинарной книги в неделю (не регулярных)</label>
+    <input type="number" min="0" max="7" id="f-base-dinners" placeholder="авто (2–4)" style="width:120px"/>
+    <div class="mood-caption">сколько ужинов в неделю берём из основной книги рецептов, остальное — из регулярных «Белок + гарнир». Пусто — авто (2–4 блюда по всей неделе).</div>
+
     <label class="field-label" style="margin-top:14px">Исключить продукты (через запятую)</label>
     <textarea class="field-input" id="f-exclude" placeholder="грибы, орехи…"></textarea>
 
@@ -2051,6 +2055,8 @@ window.openFamily = async function() {
   document.getElementById('f-q-meat').value = household.dinnerQuota?.meat || '';
   document.getElementById('f-q-fish').value = household.dinnerQuota?.fish || '';
   document.getElementById('f-q-veg').value = household.dinnerQuota?.veg || '';
+  document.getElementById('f-base-dinners').value =
+    (household.baseDinnersPerWeek ?? '') === '' ? '' : household.baseDinnersPerWeek;
   document.getElementById('fam-members').innerHTML = '';
   (household.members?.length ? household.members : [{ name: '', coeff: 1 }])
     .forEach(m => addFamMemberRow(m.name, m.coeff));
@@ -2084,6 +2090,9 @@ window.saveFamily = async function() {
     rhythm[d] = v > 0 ? v : null;
   });
   const qv = id => Math.max(0, parseInt(document.getElementById(id).value, 10) || 0);
+  // ужинов из книги: пусто → null (авто), иначе целое 0–7
+  const bdRaw = document.getElementById('f-base-dinners').value.trim();
+  const baseDinnersPerWeek = bdRaw === '' ? null : Math.min(7, Math.max(0, parseInt(bdRaw, 10) || 0));
   const substitutions = [...document.querySelectorAll('#fam-subs .fam-member-row')].map(row => ({
     from: row.querySelector('.sub-from').value.trim(),
     to: row.querySelector('.sub-to').value.trim(),
@@ -2101,6 +2110,7 @@ window.saveFamily = async function() {
     substitutions,
     showMicros: document.getElementById('f-show-micros').checked,
     dinnerQuota: { meat: qv('f-q-meat'), fish: qv('f-q-fish'), veg: qv('f-q-veg') },
+    baseDinnersPerWeek,
   };
   subMap = buildSubMap(substitutions); // применяем сразу, без перезагрузки
   try {

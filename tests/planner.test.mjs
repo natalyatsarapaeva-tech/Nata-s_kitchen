@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   weekStartISO, buildSlots, generateWeek, rerollSlot,
   aggregateShopping, shoppingAmountLabel, weekTotals, DAYS,
-  baseWeekTarget, pickBaseSlotIds, dayHasReheat, pickReheatSource,
+  baseWeekTarget, pickBaseSlotIds, dayHasReheat, pickReheatSource, baseDinnersSetting,
 } from '../js/planner.js';
 import { filterCandidates, proteinKey, sideKey } from '../js/suggest.js';
 import { buildDict } from '../js/nutrition-core.js';
@@ -187,6 +187,37 @@ test('generateWeek: батч-блюдо занимает разогрев сле
   const [cd] = cookId.split('_'); const [rd, rm] = reheatId.split('_');
   assert.equal(DAYS.indexOf(rd), DAYS.indexOf(cd) + 1);
   assert.equal(rm, 'lunch');
+});
+
+// Регулярные блюда без истории готовки имеют одинаковый скор — раньше это
+// давало алфавитную выдачу; теперь случайный тай-брейк + запрет соседних.
+const ALPHA_REGULARS = Array.from({ length: 10 }, (_, i) => ({
+  id: `r${i}`, title: `Блюдо ${String.fromCharCode(97 + i)}`, tags: ['veggie', 'regular'],
+  meta: '~30 мин', ingredients: [{ n: `Овощ${i}`, a: '100 г' }],
+}));
+const lcg = seed => { let s = seed >>> 0; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; };
+
+test('generateWeek: выдача рандомная, не по алфавиту (разные seed → разный порядок)', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  const seqA = Object.values(generateWeek(ALPHA_REGULARS, profile, {}, null, NOW, lcg(1))).map(s => s.recipeId);
+  const seqB = Object.values(generateWeek(ALPHA_REGULARS, profile, {}, null, NOW, lcg(7))).map(s => s.recipeId);
+  assert.notDeepEqual(seqA, seqB, 'разные seed дают разный порядок — не фиксированный алфавит');
+  // и это не строго возрастающий по каталогу порядок r0,r1,r2…
+  const idxA = seqA.map(id => ALPHA_REGULARS.findIndex(r => r.id === id));
+  const ascending = idxA.every((v, i) => i === 0 || v > idxA[i - 1]);
+  assert.ok(!ascending, 'ужины не идут строго по порядку каталога');
+});
+
+test('generateWeek: соседние по списку блюда не идут подряд по вечерам', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {} };
+  // rand=()=>0 → тай-брейк стабилен, но гард «не соседние ±2» всё равно работает
+  const slots = generateWeek(ALPHA_REGULARS, profile, {}, null, NOW, () => 0);
+  const idx = DAYS.map(d => slots[`${d}_dinner`]).filter(Boolean)
+    .map(s => ALPHA_REGULARS.findIndex(r => r.id === s.recipeId));
+  for (let i = 1; i < idx.length; i++) {
+    assert.ok(Math.abs(idx[i] - idx[i - 1]) > 2,
+      `ужины ${i - 1} и ${i} — соседние по каталогу (${idx[i - 1]}→${idx[i]})`);
+  }
 });
 
 test('dayHasReheat: один разогрев в день', () => {
@@ -454,6 +485,34 @@ test('generateWeek: регулярные — основа, базовых ров
   const baseCount = ids.filter(id => id.startsWith('base')).length;
   assert.equal(baseCount, 2, 'на 7 ужинов — 2 базовых блюда');
   assert.equal(ids.filter(id => id.startsWith('reg')).length, 5, 'остальные — регулярные');
+});
+
+test('baseDinnersSetting: парсинг числа ужинов из книги', () => {
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 3 }), 3);
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 0 }), 0);
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 99 }), 7, 'потолок 7');
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: null }), null, 'null → авто');
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: '' }), null, 'пусто → авто');
+  assert.equal(baseDinnersSetting({}), null, 'нет поля → авто');
+  assert.equal(baseDinnersSetting({ baseDinnersPerWeek: 'мусор' }), null);
+});
+
+test('generateWeek: baseDinnersPerWeek — ровно столько ужинов из книги', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {}, baseDinnersPerWeek: 3 };
+  const slots = generateWeek(MIXED_CATALOG, profile, {}, null, NOW, () => 0);
+  const dinnerBase = Object.entries(slots)
+    .filter(([id, s]) => id.endsWith('_dinner') && s.recipeId?.startsWith('base')).length;
+  assert.equal(dinnerBase, 3, 'ровно 3 ужина из книги');
+  const dinnerReg = Object.entries(slots)
+    .filter(([id, s]) => id.endsWith('_dinner') && s.recipeId?.startsWith('reg')).length;
+  assert.equal(dinnerReg, 4, 'остальные 4 ужина — регулярные');
+});
+
+test('generateWeek: baseDinnersPerWeek=0 — недели без блюд из книги', () => {
+  const profile = { planMeals: ['dinner'], weekendFull: false, rhythm: {}, baseDinnersPerWeek: 0 };
+  const slots = generateWeek(MIXED_CATALOG, profile, {}, null, NOW, () => 0);
+  const baseCount = Object.values(slots).filter(s => s.recipeId?.startsWith('base')).length;
+  assert.equal(baseCount, 0, 'ни одного базового блюда');
 });
 
 test('generateWeek: залоченные базовые расходуют базовый лимит', () => {

@@ -333,7 +333,11 @@ export function pickSuggestion(recipes, opts, excludeIds = [], now = Date.now(),
       // больше совпавших желаемых продуктов → заметно выше в выдаче
       score: scoreRecipe(r, now)
         + (o.want?.length ? matchWantedIngredients(r, o.want).length * 30 : 0),
-    })).sort((a, b) => b.score - a.score);
+      // случайный тай-брейк: у регулярных блюд, что ни разу не готовили, скор
+      // одинаковый — без этого сортировка стабильна и выдача идёт по алфавиту
+      // (два бефстроганова подряд). rand=()=>0 в тестах → порядок стабилен.
+      j: rand(),
+    })).sort((a, b) => (b.score - a.score) || (b.j - a.j));
     return { recipe: pickWeighted(scored, rand).recipe, relaxed };
   };
 
