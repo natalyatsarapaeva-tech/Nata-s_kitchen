@@ -743,7 +743,7 @@
 import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey, pluralRu } from './js/utils.js';
-import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT } from './js/nutrition.js';
+import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT, chatCompletion, requireGptKey } from './js/nutrition.js';
 import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular, filterForeignRegular } from './js/regular.js';
 import { COMBO_PROMPT, buildComboUserMsg, normalizeParsedCombo, buildComboRecipes } from './js/combo.js';
 import { DEFAULT_MENU_CHECK_PROMPT, describeWeekForCheck, buildMenuCheckUserMsg, parseMenuCheckResult } from './js/menucheck.js';
@@ -1092,12 +1092,8 @@ window.updateNutritionCalc = function() {
 };
 
 window.lookupMissingNutrition = async function() {
-  let apiKey = getOpenAIKey();
-  if (!apiKey) {
-    apiKey = prompt('OpenAI API Key (сохранится в браузере):');
-    if (!apiKey) return;
-    setOpenAIKey(apiKey);
-  }
+  const apiKey = requireGptKey('OpenAI API Key (сохранится в браузере):');
+  if (apiKey === null) return;
   const recipe = window.currentRecipe;
   if (!recipe) return;
 
@@ -1419,38 +1415,19 @@ async function callSurpriseGPT(apiKey, userMsg) {
   ];
   // Сначала модель с веб-поиском (даёт ссылку на источник), при недоступности — обычная
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'gpt-4o-search-preview', web_search_options: {}, max_tokens: 2500, messages })
-    });
-    if (!res.ok) throw new Error('search model unavailable');
-    const data = await res.json();
+    const data = await chatCompletion({ model: 'gpt-4o-search-preview', web_search_options: {}, max_tokens: 2500, messages }, apiKey);
     const msg = data.choices[0].message;
     const url = (msg.annotations || []).find(a => a.type === 'url_citation')?.url_citation?.url || null;
     return { parsed: parseJsonLoose(msg.content), url };
   } catch (eSearch) {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: 'gpt-4o', response_format: { type: 'json_object' }, max_tokens: 2500, messages })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `HTTP ${res.status}`);
-    }
-    const data = await res.json();
+    const data = await chatCompletion({ model: 'gpt-4o', response_format: { type: 'json_object' }, max_tokens: 2500, messages }, apiKey);
     return { parsed: parseJsonLoose(data.choices[0].message.content), url: null };
   }
 }
 
 window.surpriseMe = async function() {
-  let apiKey = getOpenAIKey();
-  if (!apiKey) {
-    apiKey = prompt('Для поиска новых рецептов нужен OpenAI API Key (сохранится в браузере):');
-    if (!apiKey) return;
-    setOpenAIKey(apiKey);
-  }
+  const apiKey = requireGptKey('Для поиска новых рецептов нужен OpenAI API Key (сохранится в браузере):');
+  if (apiKey === null) return;
   const wrap = document.getElementById('idea-card-wrap');
   wrap.innerHTML = `<div class="idea-card"><div class="idea-loading"><div class="loading-emoji">🌍</div>Ищу новый рецепт…<br><small>обычно 5–15 секунд</small></div></div>`;
 
@@ -1638,12 +1615,8 @@ window.sanityCheckWeek = async function() {
   if (Object.values(slots).filter(s => s?.recipeId).length < 2) {
     status.textContent = 'Сначала сгенерируй неделю.'; return;
   }
-  let apiKey = getOpenAIKey();
-  if (!apiKey) {
-    apiKey = prompt('Для проверки меню нужен OpenAI API Key (сохранится в браузере):');
-    if (!apiKey) return;
-    setOpenAIKey(apiKey);
-  }
+  const apiKey = requireGptKey('Для проверки меню нужен OpenAI API Key (сохранится в браузере):');
+  if (apiKey === null) return;
   const sysPrompt = (household?.menuCheckPrompt || '').trim() || DEFAULT_MENU_CHECK_PROMPT;
   const byId = {}; allRecipes.forEach(r => byId[r.id] = r);
   status.textContent = '⏳ Проверяю меню на разнообразие… (обычно 10–20 секунд)';
@@ -1974,12 +1947,8 @@ function renderReceiptThumbs() {
 }
 
 window.receiptAnalyze = async function() {
-  let apiKey = getOpenAIKey();
-  if (!apiKey) {
-    apiKey = prompt('Для распознавания чека нужен OpenAI API Key (сохранится в браузере):');
-    if (!apiKey) return;
-    setOpenAIKey(apiKey);
-  }
+  const apiKey = requireGptKey('Для распознавания чека нужен OpenAI API Key (сохранится в браузере):');
+  if (apiKey === null) return;
   if (!receiptImages.length) return;
   const btn = document.getElementById('rcpt-analyze');
   btn.disabled = true; btn.textContent = '⏳ Распознаю…';
@@ -2256,12 +2225,8 @@ window.assignPicked = async function(rid) {
 
 // «Удиви меня» прямо в слот: критерии из слота + семейные исключения
 window.pickerSurprise = async function() {
-  let apiKey = getOpenAIKey();
-  if (!apiKey) {
-    apiKey = prompt('Для поиска рецептов нужен OpenAI API Key (сохранится в браузере):');
-    if (!apiKey) return;
-    setOpenAIKey(apiKey);
-  }
+  const apiKey = requireGptKey('Для поиска рецептов нужен OpenAI API Key (сохранится в браузере):');
+  if (apiKey === null) return;
   const slotId = pickerSlotId;
   const [day, meal] = slotId.split('_');
   const listEl = document.getElementById('picker-list');
@@ -2446,12 +2411,8 @@ window.parseRegularDishes = async function() {
     return;
   }
   if (!text) { status.textContent = 'Сначала опиши привычные блюда семьи'; return; }
-  let apiKey = getOpenAIKey();
-  if (!apiKey) {
-    apiKey = prompt('Для разбора описания нужен OpenAI API Key (сохранится в браузере):');
-    if (!apiKey) return;
-    setOpenAIKey(apiKey);
-  }
+  const apiKey = requireGptKey('Для разбора описания нужен OpenAI API Key (сохранится в браузере):');
+  if (apiKey === null) return;
   const count = clampRegularCount(document.getElementById('f-regular-count').value);
   const btn = document.getElementById('regular-parse-btn');
   btn.disabled = true;
@@ -2493,12 +2454,8 @@ window.parseComboDishes = async function() {
     return;
   }
   if (!text) { status.textContent = 'Сначала опиши привычные блюда семьи (поле выше)'; return; }
-  let apiKey = getOpenAIKey();
-  if (!apiKey) {
-    apiKey = prompt('Для разбора описания нужен OpenAI API Key (сохранится в браузере):');
-    if (!apiKey) return;
-    setOpenAIKey(apiKey);
-  }
+  const apiKey = requireGptKey('Для разбора описания нужен OpenAI API Key (сохранится в браузере):');
+  if (apiKey === null) return;
   const maxRaw = parseInt(document.getElementById('f-combo-max').value, 10);
   const max = maxRaw > 0 ? Math.min(30, maxRaw) : null;
   const btn = document.getElementById('combo-parse-btn');

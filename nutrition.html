@@ -89,7 +89,7 @@
 import { db, collection, getDocs, doc, setDoc, authReady } from './js/firebase.js';
 await authReady; // запросы должны уйти с auth-токеном (см. firestore.rules)
 import { escHtml, normalizeIngName as normalize, getOpenAIKey, setOpenAIKey } from './js/utils.js';
-import { callNutritionGPT as callGPTShared, callJsonGPT, nutritionPayload, expandIngredients, buildDict } from './js/nutrition.js';
+import { callNutritionGPT as callGPTShared, callJsonGPT, nutritionPayload, expandIngredients, buildDict, usingProxy } from './js/nutrition.js';
 
 let ingredientMap = {};  // normalizedKey → { display, count }
 let nutritionData = {};  // canonicalKey → { kcal, protein, fat, carbs, unitG?, aliases?… }
@@ -98,11 +98,17 @@ let aliasMap = {};       // синоним → канонический ключ
 const canon = k => aliasMap[k] || k;
 const resolved = k => nutritionData[canon(k)];
 
-const savedKey = getOpenAIKey();
-if (savedKey) document.getElementById('api-key').value = savedKey;
-document.getElementById('api-key').addEventListener('change', e => {
-  setOpenAIKey(e.target.value);
-});
+// При включённом прокси ключ не нужен: его держит Worker (см. worker/README.md)
+if (usingProxy()) {
+  document.getElementById('api-key').closest('.card').style.display = 'none';
+} else {
+  const savedKey = getOpenAIKey();
+  if (savedKey) document.getElementById('api-key').value = savedKey;
+  document.getElementById('api-key').addEventListener('change', e => {
+    setOpenAIKey(e.target.value);
+  });
+}
+const apiKeyValue = () => usingProxy() ? '' : document.getElementById('api-key').value.trim();
 
 window.scanAll = async function() {
   setStatus('Загружаю рецепты…');
@@ -206,9 +212,9 @@ function renderTable(keys) {
 }
 
 async function callGPT(names) {
-  const apiKey = document.getElementById('api-key').value.trim();
-  if (!apiKey) { setStatus('⚠️ Введи OpenAI API key'); throw new Error('no key'); }
-  setOpenAIKey(apiKey);
+  const apiKey = apiKeyValue();
+  if (!apiKey && !usingProxy()) { setStatus('⚠️ Введи OpenAI API key'); throw new Error('no key'); }
+  if (apiKey) setOpenAIKey(apiKey);
   return callGPTShared(names, apiKey);
 }
 
@@ -334,9 +340,9 @@ const ENRICH_PROMPT = `Ты кулинарный справочник. Для к
 - storage: "fridge|freezer|pantry" — где обычно хранится до готовки`;
 
 window.enrichDictionary = async function() {
-  const apiKey = document.getElementById('api-key').value.trim();
-  if (!apiKey) { setStatus('⚠️ Введи OpenAI API key'); return; }
-  setOpenAIKey(apiKey);
+  const apiKey = apiKeyValue();
+  if (!apiKey && !usingProxy()) { setStatus('⚠️ Введи OpenAI API key'); return; }
+  if (apiKey) setOpenAIKey(apiKey);
 
   const noCategory = Object.keys(nutritionData).filter(k => !nutritionData[k].category);
   if (!noCategory.length) { setStatus('✅ Справочник уже обогащён.'); return; }

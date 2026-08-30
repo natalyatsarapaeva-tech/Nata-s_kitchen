@@ -1,0 +1,23 @@
+name = "natas-kitchen-gpt"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Проект Firebase, чьи ID-токены принимаем (он же aud токена).
+FIREBASE_PROJECT_ID = "natas-kitchen"
+
+# Откуда пускаем запросы. Пусто — не проверять источник.
+ALLOWED_ORIGINS = "https://natalyatsarapaeva-tech.github.io"
+
+# Кому можно тратить ключ — почты членов семьи через запятую.
+# ПУСТО = ЗАКРЫТО ДЛЯ ВСЕХ: в Firebase-проекте открыта саморегистрация,
+# и без списка любой, кто нашёл сайт, тратил бы наши деньги.
+ALLOWED_EMAILS = ""
+
+# Необязательные ограничители (значения по умолчанию — в src/guard.js).
+# ALLOWED_MODELS = "gpt-4o,gpt-4o-search-preview"
+# MAX_TOKENS_CAP = "8000"
+# RATE_MAX_REQUESTS = "20"
+
+# Ключ OpenAI задаётся секретом, а не здесь:
+#   npx wrangler secret put OPENAI_API_KEY

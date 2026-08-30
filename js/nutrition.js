@@ -3,9 +3,12 @@
 // чтобы страницы импортировали один модуль).
 import { db, doc, setDoc, getDoc, collection, getDocs } from './firebase.js';
 import { normalizeIngName } from './utils.js';
-import { callNutritionGPT, nutritionPayload, buildDict } from './nutrition-core.js';
+import { nutritionPayload, buildDict } from './nutrition-core.js';
+import { callNutritionGPT } from './gpt.js';
 
 export * from './nutrition-core.js';
+// Страницы импортируют вызовы GPT отсюда же, чтобы не знать про транспорт.
+export { callJsonGPT, callNutritionGPT, chatCompletion, requireGptKey, usingProxy } from './gpt.js';
 
 export async function getNutritionDoc(key) {
   const snap = await getDoc(doc(db, 'nutrition', key));

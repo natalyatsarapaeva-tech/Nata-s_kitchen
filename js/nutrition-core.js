@@ -95,35 +95,8 @@ export const NUTRITION_PROMPT = `Ты диетолог. Верни ОДИН JSON
 - unitG: вес ОДНОГО среднего экземпляра в граммах — ОБЯЗАТЕЛЬНО для любого ингредиента который считают штуками или экземплярами: овощи, фрукты, яйца, грибы, и т.п. Примеры: яйцо=60, картофель=150, морковь=80, лук=100, свёкла=200, болгарский перец=150, помидор=100, огурец=100, кабачок=250, яблоко=150. Для сыпучих и жидких (мука, сахар, масло, молоко) — null.
 Одно десятичное. Данные для сырых продуктов по USDA.`;
 
-// Универсальный JSON-вызов GPT: system-промпт + user-сообщение → объект.
-// user — строка или массив content-блоков OpenAI (текст + image_url):
-// так же вызывается распознавание чека по фото (js/prices.js, index.html).
-export async function callJsonGPT(system, user, apiKey, maxTokens = 3000) {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'gpt-4o', max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user }
-      ]
-    })
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  return JSON.parse(data.choices[0].message.content);
-}
-
-// Запрашивает у GPT КБЖУ для списка названий ингредиентов.
-export async function callNutritionGPT(names, apiKey) {
-  return callJsonGPT(NUTRITION_PROMPT,
-    'Верни JSON с данными для всех этих ингредиентов: ' + names.join(', '), apiKey);
-}
+// Вызовы GPT переехали в js/gpt.js: там выбор между прокси-Worker'ом и
+// личным ключом, а этот модуль остаётся чистым (тестируется в Node).
 
 // Собирает валидный документ справочника из ответа GPT или null.
 // Микроэлементы (клетчатка/калий/фосфор) — опциональны: пишутся, только

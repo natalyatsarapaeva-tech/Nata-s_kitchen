@@ -217,7 +217,7 @@ import { db, doc, setDoc } from './js/firebase.js';
 import { ownerId, initAuth } from './js/store.js';
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml as esc, normalizeIngName, slugify, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
-import { callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients } from './js/nutrition.js';
+import { callNutritionGPT, nutritionPayload, getNutritionDoc, saveNutritionDoc, expandIngredients, chatCompletion, usingProxy } from './js/nutrition.js';
 
 // Импорт пишет рецепты с createdBy = uid — без входа отправляем на главную.
 if (!await initAuth()) location.replace('index.html');
@@ -230,11 +230,17 @@ let currentMode = 'photo';
 let parsedRecipe = null; // последний ответ GPT: структурные поля и attrs
 
 // ── API KEY ──
-const savedKey = getOpenAIKey();
-if (savedKey) document.getElementById('api-key').value = savedKey;
-document.getElementById('api-key').addEventListener('change', e => {
-  setOpenAIKey(e.target.value);
-});
+// При включённом прокси ключ не нужен: его держит Worker (см. worker/README.md)
+if (usingProxy()) {
+  document.querySelector('.api-box').style.display = 'none';
+} else {
+  const savedKey = getOpenAIKey();
+  if (savedKey) document.getElementById('api-key').value = savedKey;
+  document.getElementById('api-key').addEventListener('change', e => {
+    setOpenAIKey(e.target.value);
+  });
+}
+const apiKeyValue = () => usingProxy() ? '' : document.getElementById('api-key').value.trim();
 
 // ── MODE SWITCH ──
 window.setMode = function(mode) {
@@ -339,8 +345,8 @@ const SYSTEM_PROMPT = `Ты помощник по кулинарии. Извле
 
 // ── ANALYZE PHOTOS ──
 window.analyze = async function() {
-  const apiKey = document.getElementById('api-key').value.trim();
-  if (!apiKey) { toast('Введи OpenAI API key ☝️'); return; }
+  const apiKey = apiKeyValue();
+  if (!apiKey && !usingProxy()) { toast('Введи OpenAI API key ☝️'); return; }
   if (!images.length) { toast('Сначала добавь фото'); return; }
 
   document.getElementById('analyze-photo-btn').disabled = true;
@@ -360,8 +366,8 @@ window.analyze = async function() {
 
 // ── ANALYZE TEXT ──
 window.analyzeText = async function() {
-  const apiKey = document.getElementById('api-key').value.trim();
-  if (!apiKey) { toast('Введи OpenAI API key ☝️'); return; }
+  const apiKey = apiKeyValue();
+  if (!apiKey && !usingProxy()) { toast('Введи OpenAI API key ☝️'); return; }
   const rawText = document.getElementById('raw-text').value.trim();
   if (!rawText) { toast('Вставь текст рецепта'); return; }
 
@@ -378,28 +384,18 @@ window.analyzeText = async function() {
 async function callGPT(apiKey, content) {
   try {
     setStep(2, 'active');
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        max_tokens: 2500,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content }
-        ]
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error?.message || `HTTP ${res.status}`);
-    }
+    const data = await chatCompletion({
+      model: 'gpt-4o',
+      max_tokens: 2500,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content }
+      ]
+    }, apiKey);
 
     setStep(2, 'done'); setStep(3, 'active');
 
-    const data = await res.json();
     const raw = data.choices[0].message.content.trim();
     const clean = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
     const recipe = JSON.parse(clean);
@@ -537,8 +533,8 @@ window.saveToFirebase = async function() {
     toast('✅ Рецепт сохранён!');
 
     // Auto-lookup nutrition for new ingredients (best-effort, no error shown to user)
-    const apiKey = document.getElementById('api-key').value.trim();
-    if (apiKey) {
+    const apiKey = apiKeyValue();
+    if (apiKey || usingProxy()) {
       btn.textContent = '🥗 Ищу калорийность…';
       lookupAndSaveNutrition(ingredients, apiKey).catch(() => {});
     }
