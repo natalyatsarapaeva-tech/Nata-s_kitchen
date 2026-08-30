@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   escHtml, normalizeIngName, slugify,
-  parseLeadingNumber, parseFractionInput, formatScaledNumber, scaleAmount
+  parseLeadingNumber, parseFractionInput, formatScaledNumber, scaleAmount, pluralRu
 } from '../js/utils.js';
 
 test('escHtml экранирует опасные символы', () => {
@@ -83,4 +83,18 @@ test('parseJsonLoose: markdown-заборы и текст вокруг JSON', as
   assert.deepEqual(parseJsonLoose('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(parseJsonLoose('Вот рецепт:\n{"a":{"b":2}}\nПриятного!'), { a: { b: 2 } });
   assert.throws(() => parseJsonLoose('не json'));
+});
+
+test('pluralRu: склонение после числа', () => {
+  const f = ['строка', 'строки', 'строк'];
+  assert.equal(pluralRu(1, f), 'строка');
+  assert.equal(pluralRu(2, f), 'строки');
+  assert.equal(pluralRu(4, f), 'строки');
+  assert.equal(pluralRu(5, f), 'строк');
+  assert.equal(pluralRu(11, f), 'строк');
+  assert.equal(pluralRu(12, f), 'строк');
+  assert.equal(pluralRu(21, f), 'строка');
+  assert.equal(pluralRu(22, f), 'строки');
+  assert.equal(pluralRu(25, f), 'строк');
+  assert.equal(pluralRu(0, f), 'строк');
 });

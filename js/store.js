@@ -8,6 +8,7 @@
 //   households/{hid}         — профиль семьи + ownerUid + joinCode (код приглашения)
 //   households/{hid}/recipeState/{rid} — история готовки ЭТОЙ семьи
 //   households/{hid}/plans/{weekStart} — недельные планы и списки покупок
+//   households/{hid}/prices/{ключ}    — ориентиры цен семьи (чеки + ручной ввод)
 //
 // Семья 'default' существовала до auth: владелец «забирает» её при первом
 // входе (claimLegacyHousehold), данные и история не мигрируются — остаются на месте.
@@ -211,4 +212,19 @@ export async function loadPlan(weekStart) {
 
 export async function savePlan(plan) {
   await setDoc(doc(db, 'households', hid(), 'plans', plan.weekStart), plan);
+}
+
+// ── Ориентиры цен (households/{hid}/prices/{канонический ключ}) ──
+// Цены пер-семейные, а не в общем справочнике nutrition: они зависят от
+// города, магазина и месяца — чужая цена на курицу нам не ориентир.
+
+export async function loadPrices() {
+  const snap = await getDocs(collection(db, 'households', hid(), 'prices'));
+  const byKey = {};
+  snap.docs.forEach(d => { byKey[d.id] = d.data(); });
+  return byKey;
+}
+
+export async function savePriceDoc(key, data) {
+  await setDoc(doc(db, 'households', hid(), 'prices', key), { ...data, key });
 }

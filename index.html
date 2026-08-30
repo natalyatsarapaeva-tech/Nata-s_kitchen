@@ -227,6 +227,30 @@
     .shop-item input{width:18px;height:18px;accent-color:var(--amber);flex-shrink:0;}
     .shop-item.done .shop-name{text-decoration:line-through;color:var(--text-soft);}
     .link-btn{background:none;border:none;padding:0;margin-left:6px;font:inherit;color:var(--amber);font-weight:600;cursor:pointer;text-decoration:underline;}
+    .shop-main{flex:1;display:flex;flex-direction:column;gap:1px;min-width:0;}
+    .shop-hint{font-size:11px;color:var(--text-soft);}
+    .shop-hint.good{color:#3f7d52;}
+    .shop-hint.high{color:var(--red);}
+    .shop-price{background:none;border:none;font-family:'Lato',sans-serif;font-size:12px;font-weight:700;color:var(--brown-light);cursor:pointer;padding:3px 6px;border-radius:8px;white-space:nowrap;}
+    .shop-price:active{background:var(--warm);}
+    .shop-price.empty{color:var(--text-soft);border:1px dashed var(--warm);font-weight:600;}
+    .basket-total{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--warm);border-radius:12px;padding:10px 14px;font-size:13px;color:var(--brown);margin-bottom:10px;}
+    .basket-total b{font-size:15px;}
+    .basket-total button{background:var(--cream);border:none;border-radius:10px;padding:7px 10px;font-family:'Lato',sans-serif;font-size:12px;font-weight:700;color:var(--brown);cursor:pointer;white-space:nowrap;}
+    /* ── ЧЕК ── */
+    .rcpt-drop{display:block;border:2px dashed var(--amber);border-radius:14px;padding:22px 12px;text-align:center;color:var(--amber);font-weight:700;font-size:14px;cursor:pointer;position:relative;}
+    .rcpt-drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+    .rcpt-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+    .rcpt-thumb{position:relative;width:64px;height:64px;border-radius:10px;overflow:hidden;border:1px solid var(--warm);}
+    .rcpt-thumb img{width:100%;height:100%;object-fit:cover;}
+    .rcpt-thumb button{position:absolute;top:0;right:0;background:rgba(46,31,20,.6);color:#fff;border:none;width:20px;height:20px;line-height:20px;padding:0;cursor:pointer;font-size:14px;}
+    .rcpt-status{font-size:12px;color:var(--text-soft);margin:10px 0;min-height:16px;}
+    .rcpt-line{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--warm);}
+    .rcpt-line input[type=checkbox]{width:18px;height:18px;accent-color:var(--amber);flex-shrink:0;}
+    .rcpt-line .rcpt-fields{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;}
+    .rcpt-line .rcpt-raw{font-size:11px;color:var(--text-soft);}
+    .rcpt-line input[type=text]{width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:13px;color:var(--text);outline:none;}
+    .rcpt-line .rcpt-price{width:104px;flex-shrink:0;}
     .shop-name{flex:1;}
     .shop-amt{color:var(--brown-light);font-weight:700;font-size:12px;text-align:right;}
     /* ── FAMILY ── */
@@ -310,6 +334,8 @@
     .pw-shop-cat{break-inside:avoid;margin-bottom:2mm;}
     .pw-shop-cat-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5c3d2e;margin-bottom:1mm;}
     .pw-shop-item{display:flex;justify-content:space-between;gap:4mm;font-size:11px;padding:.5mm 0;border-bottom:.4pt solid #eee4d6;}
+    .pw-shop-good{color:#7a5c4a;font-size:9px;}
+    .pw-shop-sum{font-size:12px;color:#5c3d2e;font-weight:400;}
     .pw-shop-box{width:3mm;height:3mm;border:.6pt solid #8b6355;border-radius:.6mm;flex-shrink:0;margin-right:2mm;}
     .pw-shop-name{flex:1;display:flex;align-items:center;}
     .pw-shop-amt{color:#8b6355;font-weight:700;font-size:10px;white-space:nowrap;}
@@ -527,6 +553,7 @@
     <div id="week-grid"></div>
     <div class="week-totals" id="week-totals" style="display:none"></div>
     <div class="section-label">🛒 Список покупок</div>
+    <div class="basket-total" id="basket-total" style="display:none"></div>
     <div class="ingredients-box" id="shopping-list"><div class="idea-empty">Сгенерируй неделю — список соберётся сам</div></div>
     <div class="mood-caption" id="shopping-status" style="margin-top:6px"></div>
   </div>
@@ -542,6 +569,26 @@
     <input id="picker-search" placeholder="Поиск по названию…" oninput="renderPickerList()" autocomplete="off"/>
     <button class="idea-act outline" onclick="pickerSurprise()" type="button">🌍 Найти новый рецепт в интернете</button>
     <div id="picker-list"></div>
+  </div>
+</div>
+
+<!-- ЧЕК: фото/скрин чека → цены продуктов -->
+<div id="receipt" class="picker-overlay" onclick="if(event.target===this)closeReceipt()">
+  <div class="picker-sheet">
+    <div class="picker-head"><span>🧾 Цены из чека</span><button onclick="closeReceipt()" type="button">×</button></div>
+    <div id="receipt-body" style="overflow-y:auto;flex:1">
+      <label class="rcpt-drop" id="rcpt-drop">
+        📷 Фото или скриншот чека
+        <input type="file" accept="image/*" multiple onchange="receiptFiles(this.files)"/>
+      </label>
+      <div class="rcpt-thumbs" id="rcpt-thumbs"></div>
+      <div class="rcpt-status" id="rcpt-status">Цены сохранятся только для твоей семьи и станут ориентиром «хорошей цены».</div>
+      <div id="rcpt-lines"></div>
+    </div>
+    <div class="idea-actions" style="margin-top:8px">
+      <button class="idea-act primary" id="rcpt-analyze" onclick="receiptAnalyze()" type="button" style="display:none">✨ Распознать чек</button>
+      <button class="idea-act primary" id="rcpt-save" onclick="receiptSave()" type="button" style="display:none">💾 Сохранить цены</button>
+    </div>
   </div>
 </div>
 
@@ -695,13 +742,16 @@
 <script type="module">
 import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
-import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey } from './js/utils.js';
+import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey, pluralRu } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT } from './js/nutrition.js';
 import { isRegularRecipe, clampRegularCount, buildRegularUserMsg, REGULAR_PROMPT, normalizeParsedRegular, filterForeignRegular } from './js/regular.js';
 import { COMBO_PROMPT, buildComboUserMsg, normalizeParsedCombo, buildComboRecipes } from './js/combo.js';
 import { DEFAULT_MENU_CHECK_PROMPT, describeWeekForCheck, buildMenuCheckUserMsg, parseMenuCheckResult } from './js/menucheck.js';
 import { buildSubMap, recipeWithSubs } from './js/substitute.js';
 import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCatalog, catalogDigest, parseWantedIngredients, matchWantedIngredients, wantedThreshold, effectiveHeaviness } from './js/suggest.js';
+import { loadPrices, savePriceDoc } from './js/store.js';
+import { priceStats, addPriceSample, priceVerdict, estimateItemCost, basketTotal, formatMoney,
+  parsePriceInput, priceKeyFor, todayISO, normalizeReceipt, RECEIPT_PROMPT, MIN_SAMPLES_FOR_VERDICT } from './js/prices.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan,
   initAuth, resolveHousehold, householdId, currentUid, currentUserEmail, LEGACY_HOUSEHOLD_ID,
   signInGoogle, signInEmail, registerEmail, signOutUser,
@@ -1540,6 +1590,7 @@ window.openWeek = async function() {
   document.getElementById('week-range').textContent = weekRangeLabel(ws);
   currentPlan = await loadPlan(ws);
   delete currentPlan.checked; // отметки «куплено» больше не храним — только в браузере
+  try { prices = await loadPrices(); } catch (e) { console.error('loadPrices:', e); }
   renderWeek();
 }
 
@@ -1674,6 +1725,10 @@ window.weekOpen = function(rid) {
   if (r) openRecipe(r, 'week');
 }
 
+// Ориентиры цен семьи: {канонический ключ: {samples[]}}. Грузятся вместе с
+// планом недели, обновляются из чека и ручного ввода.
+let prices = {};
+
 // Отметки «куплено» живут только в браузере: их не сохраняем ни в
 // Firestore, ни в localStorage — это состояние одного похода в магазин.
 // Обновление страницы, генерация недели и «Очистить» сбрасывают их.
@@ -1782,14 +1837,78 @@ function renderShopping(byId) {
       lastCat = it.category;
     }
     const isC = !!shopChecked[it.key];
+    const hint = priceHint(prices[it.key]);
+    const est = estimateItemCost(it, prices[it.key]);
     html += `<div class="shop-item${isC ? ' done' : ''}">
       <input type="checkbox" ${isC ? 'checked' : ''} onchange="weekToggleCheck('${escHtml(it.key)}', this)"/>
-      <span class="shop-name">${escHtml(it.label)}</span>
+      <div class="shop-main">
+        <span class="shop-name">${escHtml(it.label)}</span>
+        ${hint ? `<span class="shop-hint ${hint.verdict || ''}">${escHtml(hint.text)}</span>` : ''}
+      </div>
       <span class="shop-amt">${escHtml(shoppingAmountLabel(it))}</span>
+      <button class="shop-price${est ? '' : ' empty'}" onclick="editPrice('${escHtml(it.key)}')"
+        title="Цена за кг или штуку">${est ? '~' + formatMoney(est.cost) : '+ цена'}</button>
     </div>`;
   }
   box.innerHTML = html;
   renderShoppingStatus(items);
+  renderBasket(items);
+}
+
+// ── ЦЕНЫ ──
+// Ориентир под названием продукта: медиана своих наблюдений и граница
+// «хорошей цены» (нижняя четверть). Пока наблюдений мало — честно пишем
+// сколько их, а не выдаём одну случайную цену за ориентир.
+function priceHint(doc) {
+  const st = priceStats(doc);
+  if (!st) return null;
+  const s = st.perKg || st.perPcs;
+  const per = st.perKg ? 'кг' : 'шт';
+  const enough = s.count >= MIN_SAMPLES_FOR_VERDICT;
+  const tail = enough
+    ? `хорошо ≤ ${Math.round(s.p25)} ₽`
+    : `${s.count} ${pluralRu(s.count, ['наблюдение', 'наблюдения', 'наблюдений'])}`;
+  return {
+    text: `${Math.round(s.median)} ₽/${per} · ${tail}`,
+    verdict: enough ? priceVerdict(s.last, s) : null,
+  };
+}
+
+function renderBasket(items) {
+  const el = document.getElementById('basket-total');
+  if (!items.length) { el.style.display = 'none'; return; }
+  const t = basketTotal(items, prices);
+  const left = basketTotal(items.filter(it => !shopChecked[it.key]), prices);
+  const anyChecked = t.covered !== left.covered;
+  const main = t.covered
+    ? `🧺 <b>~${formatMoney(t.sum)}</b> за неделю`
+    : '🧺 Цен пока нет';
+  const parts = [];
+  if (t.covered && t.covered < t.total) parts.push(`посчитано по ${t.covered} из ${t.total} позиций`);
+  if (anyChecked && left.covered) parts.push(`осталось купить ~${formatMoney(left.sum)}`);
+  if (!t.covered) parts.push('загрузи чек — посчитаем стоимость корзины');
+  el.innerHTML = `<div>${main}${parts.length ? ` <span style="opacity:.75">· ${parts.join(' · ')}</span>` : ''}</div>
+    <button onclick="openReceipt()" type="button">🧾 Чек</button>`;
+  el.style.display = 'flex';
+}
+
+// Ручная правка цены: «450» — за кг, «89,90 шт» — за штуку. Ручной ввод
+// такое же наблюдение, как строка чека, и участвует в ориентире наравне.
+window.editPrice = async function(key) {
+  const st = priceStats(prices[key]);
+  const cur = st ? `${Math.round((st.perKg || st.perPcs).median)}${st.perKg ? '' : ' шт'}` : '';
+  const raw = prompt(`Цена «${key}» за кг (или «89,90 шт» — за штуку):`, cur);
+  if (raw == null) return;
+  const parsed = parsePriceInput(raw);
+  if (!parsed) { if (raw.trim()) alert('Не разобрала цену — напиши число, например «450» или «89,90 шт».'); return; }
+  await savePrice(key, { ...parsed, date: todayISO(), source: 'manual' });
+  renderWeek();
+}
+
+async function savePrice(key, sample) {
+  const next = addPriceSample(prices[key], sample);
+  prices[key] = next;
+  try { await savePriceDoc(key, next); } catch (e) { console.error('savePriceDoc:', e); }
 }
 
 // Подпись под списком: сколько уже в корзине и как снять отметки.
@@ -1804,6 +1923,132 @@ function renderShoppingStatus(items = lastShoppingItems) {
   if (!items.length || !done) { el.innerHTML = ''; return; }
   el.innerHTML = `Куплено ${done} из ${items.length} — отмеченное не попадёт в печатный список.
     <button class="link-btn" onclick="weekClearChecks()">Снять отметки</button>`;
+}
+
+// ── ЧЕК → ЦЕНЫ ──
+// Фото/скрин чека уходит в GPT-4o vision (тот же путь, что распознавание
+// рецепта из фото), а разбор и канонизация строк — в js/prices.js. Перед
+// записью показываем строки на подтверждение: vision путается в мятой
+// бумаге и сокращениях, а молча записанная чушь испортит ориентир цен.
+let receiptImages = [];   // [{base64, mediaType, dataUrl}]
+let receiptParsed = null; // {store, date, lines[]} после распознавания
+
+window.openReceipt = function() {
+  receiptImages = []; receiptParsed = null;
+  renderReceiptThumbs(); renderReceiptLines();
+  setReceiptStatus('Цены сохранятся только для твоей семьи и станут ориентиром «хорошей цены».');
+  document.getElementById('receipt').style.display = 'flex';
+}
+
+window.closeReceipt = function() {
+  document.getElementById('receipt').style.display = 'none';
+}
+
+function setReceiptStatus(text) {
+  document.getElementById('rcpt-status').textContent = text;
+}
+
+window.receiptFiles = function(files) {
+  [...(files || [])].forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const dataUrl = e.target.result;
+      receiptImages.push({ base64: dataUrl.split(',')[1], mediaType: file.type || 'image/jpeg', dataUrl });
+      renderReceiptThumbs();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+window.removeReceiptImg = function(i) {
+  receiptImages.splice(i, 1);
+  renderReceiptThumbs();
+}
+
+function renderReceiptThumbs() {
+  document.getElementById('rcpt-thumbs').innerHTML = receiptImages.map((img, i) => `
+    <div class="rcpt-thumb"><img src="${img.dataUrl}" alt="чек ${i + 1}"/>
+      <button onclick="removeReceiptImg(${i})" type="button">×</button></div>`).join('');
+  document.getElementById('rcpt-drop').style.display = receiptImages.length ? 'none' : 'block';
+  document.getElementById('rcpt-analyze').style.display = receiptImages.length && !receiptParsed ? 'block' : 'none';
+}
+
+window.receiptAnalyze = async function() {
+  let apiKey = getOpenAIKey();
+  if (!apiKey) {
+    apiKey = prompt('Для распознавания чека нужен OpenAI API Key (сохранится в браузере):');
+    if (!apiKey) return;
+    setOpenAIKey(apiKey);
+  }
+  if (!receiptImages.length) return;
+  const btn = document.getElementById('rcpt-analyze');
+  btn.disabled = true; btn.textContent = '⏳ Распознаю…';
+  setReceiptStatus('Читаю чек…');
+  try {
+    const content = receiptImages.map(img => ({
+      type: 'image_url',
+      image_url: { url: `data:${img.mediaType};base64,${img.base64}`, detail: 'high' },
+    }));
+    content.push({ type: 'text', text: 'Распознай этот чек.' });
+    const parsed = await callJsonGPT(RECEIPT_PROMPT, content, apiKey, 3000);
+    await ensureDict();
+    receiptParsed = normalizeReceipt(parsed, ingredientDict);
+    if (!receiptParsed.lines.length) {
+      setReceiptStatus('Ничего не удалось разобрать — попробуй кадр покрупнее или без бликов.');
+    } else {
+      const n = receiptParsed.lines.length;
+      const where = [receiptParsed.store, receiptParsed.date].filter(Boolean).join(' · ');
+      setReceiptStatus(`Нашла ${n} ${pluralRu(n, ['строку', 'строки', 'строк'])}${where ? ' · ' + where : ''}. Проверь названия и цены — сохранятся только отмеченные.`);
+    }
+    renderReceiptLines();
+  } catch (e) {
+    console.error('receipt:', e);
+    setReceiptStatus('❌ ' + e.message);
+  }
+  btn.disabled = false; btn.textContent = '✨ Распознать чек';
+  renderReceiptThumbs();
+}
+
+// Строки на подтверждение: название продукта и цена правятся руками —
+// «Кур.филе охл.подл.» модель обычно сводит верно, но не всегда.
+function renderReceiptLines() {
+  const box = document.getElementById('rcpt-lines');
+  const lines = receiptParsed?.lines || [];
+  document.getElementById('rcpt-save').style.display = lines.length ? 'block' : 'none';
+  box.innerHTML = lines.map((l, i) => {
+    const per = l.perKg ? 'кг' : 'шт';
+    const val = Math.round(l.perKg || l.perPcs);
+    return `<div class="rcpt-line">
+      <input type="checkbox" id="rcpt-on-${i}" checked/>
+      <div class="rcpt-fields">
+        <input type="text" id="rcpt-key-${i}" value="${escHtml(l.key)}" placeholder="продукт"/>
+        <span class="rcpt-raw">${escHtml(l.name)} · ${escHtml(String(l.qty))} ${escHtml(l.unit)} · ${escHtml(String(l.sum))} ₽</span>
+      </div>
+      <input type="text" class="rcpt-price" id="rcpt-price-${i}" value="${val} ₽/${per}"/>
+    </div>`;
+  }).join('');
+}
+
+window.receiptSave = async function() {
+  const lines = receiptParsed?.lines || [];
+  const btn = document.getElementById('rcpt-save');
+  btn.disabled = true; btn.textContent = '⏳ Сохраняю…';
+  let saved = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (!document.getElementById(`rcpt-on-${i}`)?.checked) continue;
+    const name = document.getElementById(`rcpt-key-${i}`).value.trim();
+    // цена за кг по умолчанию — так же, как в ручном вводе
+    const parsed = parsePriceInput(document.getElementById(`rcpt-price-${i}`).value, lines[i].perKg ? 'kg' : 'pcs');
+    if (!name || !parsed) continue;
+    await savePrice(priceKeyFor(name, ingredientDict), {
+      ...parsed, date: receiptParsed.date, store: receiptParsed.store, source: 'receipt',
+    });
+    saved++;
+  }
+  btn.disabled = false; btn.textContent = '💾 Сохранить цены';
+  if (!saved) { setReceiptStatus('Ничего не отмечено — цены не сохранены.'); return; }
+  closeReceipt();
+  renderWeek(); // цены и стоимость корзины в списке — это и есть подтверждение
 }
 
 // ── ПЕЧАТЬ НЕДЕЛИ ──
@@ -1868,10 +2113,17 @@ function printShoppingHTML() {
     if (!g || g.cat !== it.category) { g = { cat: it.category, items: [] }; groups.push(g); }
     g.items.push(it);
   }
+  // в магазине полезен не прогноз траты, а граница «дешевле этого — бери»
+  const goodPrice = it => {
+    const st = priceStats(prices[it.key]);
+    const s = st && (st.perKg || st.perPcs);
+    if (!s || s.count < MIN_SAMPLES_FOR_VERDICT) return '';
+    return ` <span class="pw-shop-good">≤${Math.round(s.p25)} ₽/${st.perKg ? 'кг' : 'шт'}</span>`;
+  };
   const groupHtml = g => `<div class="pw-shop-cat">
       <div class="pw-shop-cat-label">${CATEGORY_LABELS[g.cat] || CATEGORY_LABELS.other}</div>
       ${g.items.map(it => `<div class="pw-shop-item">
-        <span class="pw-shop-name"><span class="pw-shop-box"></span>${escHtml(it.label)}</span>
+        <span class="pw-shop-name"><span class="pw-shop-box"></span>${escHtml(it.label)}${goodPrice(it)}</span>
         <span class="pw-shop-amt">${escHtml(shoppingAmountLabel(it))}</span>
       </div>`).join('')}
     </div>`;
@@ -1888,9 +2140,13 @@ function printShoppingHTML() {
     });
   const left = cols[0].g.sort((a, b) => a.idx - b.idx);
   const right = cols[1].g.sort((a, b) => a.idx - b.idx);
+  const basket = basketTotal(items, prices);
+  const basketLabel = basket.covered
+    ? ` <span class="pw-shop-sum">~${formatMoney(basket.sum)}${basket.covered < basket.total ? ` (по ${basket.covered} из ${basket.total} позиций)` : ''}</span>`
+    : '';
   return `
     <section class="pw-page-break">
-      <div class="pw-title">🛒 Список покупок</div>
+      <div class="pw-title">🛒 Список покупок${basketLabel}</div>
       <div class="pw-shop">
         <div>${left.map(groupHtml).join('')}</div>
         <div>${right.map(groupHtml).join('')}</div>

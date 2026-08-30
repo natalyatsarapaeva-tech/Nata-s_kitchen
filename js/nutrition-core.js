@@ -96,6 +96,8 @@ export const NUTRITION_PROMPT = `Ты диетолог. Верни ОДИН JSON
 Одно десятичное. Данные для сырых продуктов по USDA.`;
 
 // Универсальный JSON-вызов GPT: system-промпт + user-сообщение → объект.
+// user — строка или массив content-блоков OpenAI (текст + image_url):
+// так же вызывается распознавание чека по фото (js/prices.js, index.html).
 export async function callJsonGPT(system, user, apiKey, maxTokens = 3000) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
