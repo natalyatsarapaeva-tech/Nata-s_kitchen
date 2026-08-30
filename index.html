@@ -226,6 +226,7 @@
     .shop-item:last-child{border-bottom:none;}
     .shop-item input{width:18px;height:18px;accent-color:var(--amber);flex-shrink:0;}
     .shop-item.done .shop-name{text-decoration:line-through;color:var(--text-soft);}
+    .link-btn{background:none;border:none;padding:0;margin-left:6px;font:inherit;color:var(--amber);font-weight:600;cursor:pointer;text-decoration:underline;}
     .shop-name{flex:1;}
     .shop-amt{color:var(--brown-light);font-weight:700;font-size:12px;text-align:right;}
     /* ── FAMILY ── */
@@ -527,6 +528,7 @@
     <div class="week-totals" id="week-totals" style="display:none"></div>
     <div class="section-label">🛒 Список покупок</div>
     <div class="ingredients-box" id="shopping-list"><div class="idea-empty">Сгенерируй неделю — список соберётся сам</div></div>
+    <div class="mood-caption" id="shopping-status" style="margin-top:6px"></div>
   </div>
 </div>
 
@@ -1537,6 +1539,7 @@ window.openWeek = async function() {
   const ws = weekStartISO();
   document.getElementById('week-range').textContent = weekRangeLabel(ws);
   currentPlan = await loadPlan(ws);
+  delete currentPlan.checked; // отметки «куплено» больше не храним — только в браузере
   renderWeek();
 }
 
@@ -1545,6 +1548,7 @@ async function persistPlan() {
 }
 
 window.generatePlanWeek = async function() {
+  shopChecked = {}; // новая неделя — новый поход в магазин
   currentPlan.slots = generateWeek(allRecipes, profileForPlanner(), currentPlan.slots, ingredientDict);
   await persistPlan();
   renderWeek();
@@ -1553,8 +1557,8 @@ window.generatePlanWeek = async function() {
 window.clearPlanWeek = async function() {
   if (!confirm('Очистить план недели?')) return;
   currentPlan.slots = {};
-  currentPlan.checked = {};
   currentPlan.notes = {};
+  shopChecked = {};
   await persistPlan();
   renderWeek();
 }
@@ -1670,11 +1674,20 @@ window.weekOpen = function(rid) {
   if (r) openRecipe(r, 'week');
 }
 
-window.weekToggleCheck = async function(key, el) {
-  currentPlan.checked = currentPlan.checked || {};
-  currentPlan.checked[key] = el.checked;
+// Отметки «куплено» живут только в браузере: их не сохраняем ни в
+// Firestore, ни в localStorage — это состояние одного похода в магазин.
+// Обновление страницы, генерация недели и «Очистить» сбрасывают их.
+let shopChecked = {};
+
+window.weekToggleCheck = function(key, el) {
+  if (el.checked) shopChecked[key] = true; else delete shopChecked[key];
   el.closest('.shop-item').classList.toggle('done', el.checked);
-  await persistPlan();
+  renderShoppingStatus();
+}
+
+window.weekClearChecks = function() {
+  shopChecked = {};
+  renderWeek();
 }
 
 function renderWeek() {
@@ -1759,16 +1772,16 @@ function renderShopping(byId) {
   const items = aggregateShopping(currentPlan.slots, byId, ingredientDict, profileForPlanner());
   if (!items.length) {
     box.innerHTML = '<div class="idea-empty">Сгенерируй неделю — список соберётся сам</div>';
+    renderShoppingStatus([]);
     return;
   }
-  const checked = currentPlan.checked || {};
   let html = '', lastCat = null;
   for (const it of items) {
     if (it.category !== lastCat) {
       html += `<div class="shop-cat">${CATEGORY_LABELS[it.category] || CATEGORY_LABELS.other}</div>`;
       lastCat = it.category;
     }
-    const isC = !!checked[it.key];
+    const isC = !!shopChecked[it.key];
     html += `<div class="shop-item${isC ? ' done' : ''}">
       <input type="checkbox" ${isC ? 'checked' : ''} onchange="weekToggleCheck('${escHtml(it.key)}', this)"/>
       <span class="shop-name">${escHtml(it.label)}</span>
@@ -1776,6 +1789,21 @@ function renderShopping(byId) {
     </div>`;
   }
   box.innerHTML = html;
+  renderShoppingStatus(items);
+}
+
+// Подпись под списком: сколько уже в корзине и как снять отметки.
+// Заодно напоминает, что отмеченное не попадёт в печать.
+let lastShoppingItems = [];
+
+function renderShoppingStatus(items = lastShoppingItems) {
+  lastShoppingItems = items;
+  const el = document.getElementById('shopping-status');
+  if (!el) return;
+  const done = items.filter(it => shopChecked[it.key]).length;
+  if (!items.length || !done) { el.innerHTML = ''; return; }
+  el.innerHTML = `Куплено ${done} из ${items.length} — отмеченное не попадёт в печатный список.
+    <button class="link-btn" onclick="weekClearChecks()">Снять отметки</button>`;
 }
 
 // ── ПЕЧАТЬ НЕДЕЛИ ──
@@ -1828,7 +1856,9 @@ function printMenuHTML() {
 
 // ── Стр.2: список покупок в две колонки (с чекбоксами для магазина) ──
 function printShoppingHTML() {
-  const items = aggregateShopping(currentPlan.slots, subRecipesById(), ingredientDict, profileForPlanner());
+  // отмеченное галочкой уже куплено — на печать не идёт
+  const items = aggregateShopping(currentPlan.slots, subRecipesById(), ingredientDict, profileForPlanner())
+    .filter(it => !shopChecked[it.key]);
   if (!items.length) return '';
 
   // группируем по категориям (порядок уже отсортирован в aggregateShopping)
