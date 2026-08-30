@@ -328,7 +328,7 @@ window.fixMissingUnitG = async function() {
 // Категория, pantry-staple, скоропортящесть и хранение — нужны планировщику
 // и списку покупок (staples не попадают в список, скоропорт — ближе к закупке).
 const ENRICH_PROMPT = `Ты кулинарный справочник. Для каждого ингредиента из запроса верни ОДИН JSON-объект: ключ — название точно как в запросе, значение:
-- category: "vegetable|fruit|meat|poultry|fish|seafood|dairy|egg|grain|legume|nut|oil|spice|herb|sauce|sweet|other"
+- category: "vegetable|fruit|meat|poultry|fish|seafood|dairy|egg|bakery|grain|legume|nut|oil|spice|herb|sauce|sweet|drink|other"
 - isPantryStaple: true если это базовый запас, который обычно есть дома и не нужно вносить в список покупок каждый раз (соль, сахар, мука, растительное масло, сушёные специи, крупы)
 - perishability: "days_2|days_5|weeks_2|months|non_perishable" — срок хранения после покупки
 - storage: "fridge|freezer|pantry" — где обычно хранится до готовки`;
@@ -347,7 +347,7 @@ window.enrichDictionary = async function() {
   const progressFill = document.getElementById('progress-fill');
   progressWrap.style.display = 'block'; progressFill.style.width = '0%';
 
-  const CATS = ['vegetable','fruit','meat','poultry','fish','seafood','dairy','egg','grain','legume','nut','oil','spice','herb','sauce','sweet','other'];
+  const CATS = ['vegetable','fruit','meat','poultry','fish','seafood','dairy','egg','bakery','grain','legume','nut','oil','spice','herb','sauce','sweet','drink','other'];
   const PERISH = ['days_2','days_5','weeks_2','months','non_perishable'];
   const STORAGE = ['fridge','freezer','pantry'];
 

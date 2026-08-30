@@ -332,6 +332,71 @@ test('canonicalShoppingKey: модификаторы, «или», группы, 
   assert.equal(canonicalShoppingKey('томаты черри', dict), 'помидор');
 });
 
+test('classifyShoppingCategory: отдел определяется по названию, а не по прихоти GPT', async () => {
+  const { classifyShoppingCategory } = await import('../js/planner.js');
+  const cat = n => classifyShoppingCategory(n, n, null);
+  // курица всегда в одном отделе, как бы её ни назвали в рецепте
+  for (const n of ['курица', 'куриное филе', 'куриная грудка', 'филе куриное', 'бёдра куриные'])
+    assert.equal(cat(n), 'meat', n);
+  assert.equal(cat('индейка'), 'meat');
+  assert.equal(cat('говядина'), 'meat');
+  assert.equal(cat('лосось'), 'fish');
+  assert.equal(cat('креветки'), 'fish');
+  // отдельные отделы: овощи, молочное, хлеб, бакалея
+  assert.equal(cat('картофель'), 'vegetable');
+  assert.equal(cat('брокколи'), 'vegetable');
+  assert.equal(cat('укроп'), 'vegetable');
+  assert.equal(cat('молоко'), 'dairy');
+  assert.equal(cat('творог'), 'dairy');
+  assert.equal(cat('яйцо'), 'dairy');
+  assert.equal(cat('хлеб'), 'bakery');
+  assert.equal(cat('лаваш'), 'bakery');
+  assert.equal(cat('мука'), 'grocery');
+  assert.equal(cat('гречка'), 'grocery');
+  assert.equal(cat('макароны'), 'grocery');
+  assert.equal(cat('яблоки'), 'fruit');
+  // ловушки: маркер одного отдела внутри товара другого
+  assert.equal(cat('сливочное масло'), 'dairy');
+  assert.equal(cat('оливковое масло'), 'grocery');
+  assert.equal(cat('кокосовое молоко'), 'grocery');
+  assert.equal(cat('панировочные сухари'), 'grocery');
+  assert.equal(cat('печенье'), 'grocery');
+  assert.equal(cat('печень куриная'), 'meat');
+  assert.equal(cat('томатная паста'), 'sauce');
+  assert.equal(cat('чёрный перец молотый'), 'sauce');
+  assert.equal(cat('болгарский перец'), 'vegetable');
+  assert.equal(cat('сок лимона'), 'fruit');
+  assert.equal(cat('апельсиновый сок'), 'drink');
+  // справочник — только запасной вариант для незнакомых названий
+  assert.equal(classifyShoppingCategory('вувузела', 'вувузела', { category: 'poultry' }), 'meat');
+  assert.equal(classifyShoppingCategory('вувузела', 'вувузела', { category: 'grain' }), 'grocery');
+  assert.equal(classifyShoppingCategory('вувузела', 'вувузела', null), 'other');
+});
+
+test('aggregateShopping: категория по названию, группы идут в порядке отделов', async () => {
+  const { CATEGORY_LABELS } = await import('../js/planner.js');
+  const recipes = {
+    a: { id: 'a', ingredients: [
+      { n: 'Куриное филе', a: '500 г', qty: 500, unit: 'g', ing: 'куриное филе' },
+      { n: 'Хлеб', a: '200 г', qty: 200, unit: 'g', ing: 'хлеб' },
+      { n: 'Молоко', a: '200 мл', qty: 200, unit: 'ml', ing: 'молоко' },
+      { n: 'Картофель', a: '3 шт', qty: 3, unit: 'pcs', ing: 'картофель' },
+      { n: 'Рис', a: '200 г', qty: 200, unit: 'g', ing: 'рис' },
+    ]},
+  };
+  const items = aggregateShopping({ mon_dinner: { recipeId: 'a' } }, recipes, null);
+  const byKey = Object.fromEntries(items.map(i => [i.key, i.category]));
+  assert.equal(byKey['куриное филе'], 'meat', 'курица не уезжает в «прочее»');
+  assert.equal(byKey['хлеб'], 'bakery');
+  assert.equal(byKey['молоко'], 'dairy');
+  assert.equal(byKey['картофель'], 'vegetable');
+  assert.equal(byKey['рис'], 'grocery');
+  // порядок отделов: овощи → мясо → молочное → хлеб → бакалея
+  assert.deepEqual(items.map(i => i.category),
+    ['vegetable', 'meat', 'dairy', 'bakery', 'grocery']);
+  assert.ok(CATEGORY_LABELS.bakery && CATEGORY_LABELS.grocery, 'у новых отделов есть подписи');
+});
+
 test('aggregateShopping: синонимы сливаются, яйца считаются штуками', () => {
   const recipes = {
     a: { id: 'a', ingredients: [
