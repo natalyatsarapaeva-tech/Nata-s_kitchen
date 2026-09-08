@@ -4,7 +4,7 @@ import { getFirestore } from "https://www.gstatic.com/firebasejs/12.12.0/firebas
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-auth.js";
 
 export {
-  collection, getDocs, doc, setDoc, deleteDoc, getDoc, query, where
+  collection, getDocs, doc, setDoc, deleteDoc, getDoc, query, where, deleteField
 } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
 
 export {

@@ -5,6 +5,9 @@
 //   recipes/{id}             — ОБЩАЯ книга рецептов (одна на все семьи);
 //                              createdBy = uid автора, только он редактирует;
 //                              легаси-рецепты (createdBy 'default'/нет) — семьи 'default'
+//   recipeImages/{id}        — большое фото блюда (аватар-квадрат лежит в самом
+//                              рецепте, чтобы список не тащил мегабайты)
+//   shares/{token}           — снимок одного рецепта для публичной ссылки
 //   households/{hid}         — профиль семьи + ownerUid + joinCode (код приглашения)
 //   households/{hid}/recipeState/{rid} — история готовки ЭТОЙ семьи
 //   households/{hid}/plans/{weekStart} — недельные планы и списки покупок
@@ -12,10 +15,11 @@
 //
 // Семья 'default' существовала до auth: владелец «забирает» её при первом
 // входе (claimLegacyHousehold), данные и история не мигрируются — остаются на месте.
-import { db, doc, getDoc, setDoc, collection, getDocs, query, where,
+import { db, doc, getDoc, setDoc, deleteDoc, deleteField, collection, getDocs, query, where,
   auth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from './firebase.js';
 import { LEGACY_HOUSEHOLD_ID, canEditRecipeAs, makeJoinCode, makeHouseholdId, normalizeJoinCode } from './household-core.js';
+import { makeShareToken, shareSnapshot } from './share.js';
 
 export { LEGACY_HOUSEHOLD_ID, normalizeJoinCode };
 export { overlayStates } from './household-core.js';
@@ -83,11 +87,12 @@ export async function resolveHousehold() {
 
 async function bindUserToHousehold(hid) {
   const uid = currentUid();
+  // merge: в этом же документе лежит карта публичных ссылок (см. shares ниже)
   await setDoc(doc(db, 'users', uid), {
     householdId: hid,
     email: currentUserEmail(),
     name: currentUser?.displayName || '',
-  });
+  }, { merge: true });
   currentHouseholdId = hid;
 }
 
@@ -227,4 +232,78 @@ export async function loadPrices() {
 
 export async function savePriceDoc(key, data) {
   await setDoc(doc(db, 'households', hid(), 'prices', key), { ...data, key });
+}
+
+// ── Фото блюда ──
+// Большая картинка лежит отдельным документом: список рецептов её не тянет,
+// она грузится только когда открыли карточку. Квадратный аватар (thumb)
+// пишется в сам рецепт — он нужен каталогу сразу.
+
+export async function loadRecipeImage(recipeId) {
+  const snap = await getDoc(doc(db, 'recipeImages', recipeId));
+  return snap.exists() ? (snap.data().data || '') : '';
+}
+
+export async function saveRecipeImage(recipeId, dataUrl) {
+  await setDoc(doc(db, 'recipeImages', recipeId), {
+    data: dataUrl,
+    createdBy: ownerId(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export async function deleteRecipeImage(recipeId) {
+  await deleteDoc(doc(db, 'recipeImages', recipeId));
+}
+
+// Аватар в самом рецепте: merge, чтобы не задеть остальные поля.
+export async function saveRecipeThumb(recipeId, thumb) {
+  await setDoc(doc(db, 'recipes', recipeId), { thumb: thumb || deleteField() }, { merge: true });
+}
+
+// ── Публичные ссылки на рецепт ──
+// Токены своих ссылок лежат в users/{uid}.shares — документ и так читает
+// только сам пользователь, а лишний индекс/запрос по коллекции не нужен.
+
+async function myShares() {
+  const uid = currentUid();
+  if (!uid) return {};
+  const snap = await getDoc(doc(db, 'users', uid));
+  return (snap.exists() && snap.data().shares) || {};
+}
+
+export async function myShareToken(recipeId) {
+  return (await myShares())[recipeId] || null;
+}
+
+// Создаёт (или обновляет) публичный снимок рецепта и возвращает токен.
+// Повторное «Поделиться» переиспользует токен — ссылка у людей не протухает,
+// а содержимое снимка освежается.
+export async function publishShare(recipe, { image = '', sharedBy = '' } = {}) {
+  const uid = currentUid();
+  if (!uid) throw new Error('Нужно войти, чтобы делиться рецептом');
+  const token = (await myShareToken(recipe.id)) || makeShareToken();
+  await setDoc(doc(db, 'shares', token), shareSnapshot(recipe, { token, uid, image, sharedBy }));
+  await setDoc(doc(db, 'users', uid), { shares: { [recipe.id]: token } }, { merge: true });
+  return token;
+}
+
+// Освежает снимок, если ссылка уже создана (после правки рецепта или фото).
+// Молча ничего не делает, когда делиться ещё не пробовали.
+export async function refreshShare(recipe, image = '', sharedBy = '') {
+  const token = await myShareToken(recipe.id);
+  if (!token) return null;
+  const uid = currentUid();
+  await setDoc(doc(db, 'shares', token), shareSnapshot(recipe, { token, uid, image, sharedBy }));
+  return token;
+}
+
+// Отзыв ссылки: документ удаляется, старая ссылка перестаёт открываться.
+export async function revokeShare(recipeId) {
+  const uid = currentUid();
+  const token = await myShareToken(recipeId);
+  if (!token) return false;
+  await deleteDoc(doc(db, 'shares', token));
+  await setDoc(doc(db, 'users', uid), { shares: { [recipeId]: deleteField() } }, { merge: true });
+  return true;
 }

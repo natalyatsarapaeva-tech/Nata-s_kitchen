@@ -13,6 +13,11 @@
 //   users/{uid}        — маппинг пользователь → семья (пишет только сам)
 //   households/{hid}   — профиль семьи; подколлекции recipeState/plans/prices — только членам
 //   recipes/{id}       — общая книга: читают все вошедшие, правит автор
+//   recipeImages/{id}  — большое фото блюда: читают вошедшие, пишет тот, кто
+//                        вправе править сам рецепт
+//   shares/{token}     — снимок ОДНОГО рецепта для публичной ссылки: читает
+//                        кто угодно по точному токену (без входа), пишет и
+//                        отзывает только тот, кто поделился
 //   nutrition/{id}     — общий справочник КБЖУ (факты, не мнения)
 
 rules_version = '2';
@@ -27,6 +32,17 @@ service cloud.firestore {
     // Семья текущего пользователя из users/{uid}
     function myHousehold() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.householdId;
+    }
+
+    // Может ли текущий пользователь править рецепт recipeId — те же условия,
+    // что в match /recipes: автор либо член легаси-семьи для легаси-рецепта.
+    // Порядок важен: myHousehold() читает users/{uid}, поэтому проверяется
+    // вторым (для автора лишнего чтения не будет).
+    function canEditRecipeDoc(recipeId) {
+      return exists(/databases/$(database)/documents/recipes/$(recipeId))
+        && (get(/databases/$(database)/documents/recipes/$(recipeId)).data.get('createdBy', 'default') == request.auth.uid
+            || (get(/databases/$(database)/documents/recipes/$(recipeId)).data.get('createdBy', 'default') == 'default'
+                && myHousehold() == 'default'));
     }
 
     match /users/{uid} {
@@ -66,6 +82,25 @@ service cloud.firestore {
       allow update: if signedIn()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['householdId'])
         && resource.data.get('householdId', 'default') == myHousehold();
+    }
+
+    // Фото блюда лежит отдельным документом (в самом рецепте — только
+    // маленький квадрат-аватар): список рецептов не должен тащить мегабайты.
+    // Право на запись — то же, что на правку рецепта, поэтому смотрим в него.
+    match /recipeImages/{recipeId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && canEditRecipeDoc(recipeId);
+    }
+
+    // Публичная ссылка на один рецепт.
+    // get разрешён всем: по ссылке открывается ровно этот документ и ничего
+    // больше — токен неугадываемый, а список коллекции наружу не отдаётся
+    // (list — только свои ссылки). Отозвать ссылку может только автор снимка.
+    match /shares/{token} {
+      allow get: if true;
+      allow list: if signedIn() && resource.data.createdBy == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.createdBy == request.auth.uid;
     }
 
     match /nutrition/{ingredientId} {
