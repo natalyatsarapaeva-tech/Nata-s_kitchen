@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Рецепт · Моя кухня</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --cream:#fdf6ec; --warm:#f5e6d0; --brown:#5c3d2e;
+      --brown-light:#8b6355; --amber:#d4843a; --amber-light:#e8a85f;
+      --text:#2e1f14; --text-soft:#7a5c4a; --white:#fff;
+      --shadow:rgba(92,61,46,0.15);
+    }
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Lato',sans-serif;background:var(--cream);color:var(--text);min-height:100vh;overflow-x:hidden;}
+
+    #loading{position:fixed;inset:0;background:var(--brown);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99;}
+    .loading-emoji{font-size:64px;animation:pulse 1.2s ease infinite;}
+    .loading-text{color:var(--cream);font-family:'Playfair Display',serif;font-size:22px;margin-top:16px;text-align:center;padding:0 24px;}
+    @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+
+    .recipe-header{background:var(--brown);padding:44px 24px 28px;}
+    .kitchen-mark{color:var(--amber-light);font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:16px;}
+    .recipe-photo{display:block;width:100%;height:230px;object-fit:cover;border-radius:18px;margin-bottom:18px;}
+    .recipe-emoji-big{font-size:56px;display:block;margin-bottom:10px;}
+    .recipe-title-big{font-family:'Playfair Display',serif;font-size:28px;color:var(--cream);line-height:1.2;}
+    .recipe-yield{font-size:12px;color:var(--amber-light);margin-top:5px;font-weight:300;letter-spacing:.08em;text-transform:uppercase;}
+
+    .recipe-body{padding:24px 20px 40px;max-width:620px;margin:0 auto;}
+    .section-label{font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:var(--amber);font-weight:700;margin-bottom:12px;}
+    .note-box{background:var(--warm);border-radius:12px;padding:12px 14px;margin-bottom:20px;font-size:13px;line-height:1.6;color:var(--brown);border-left:4px solid var(--amber);}
+    .ingredients-box{background:var(--white);border-radius:14px;padding:18px;margin-bottom:24px;box-shadow:0 2px 10px var(--shadow);}
+    .ingredient-item{display:flex;justify-content:space-between;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--warm);font-size:14px;gap:8px;}
+    .ingredient-item:last-child{border-bottom:none;}
+    .ingredient-name{color:var(--text);flex:1;}
+    .ingredient-amount{color:var(--brown-light);font-weight:700;font-size:13px;text-align:right;}
+    .ingredient-divider{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--amber);padding:12px 0 4px;}
+    .steps-list{display:flex;flex-direction:column;gap:14px;margin-bottom:28px;}
+    .step-item{display:flex;gap:14px;align-items:flex-start;}
+    .step-num{flex-shrink:0;width:26px;height:26px;border-radius:50%;background:var(--amber);color:var(--white);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+    .step-text{font-size:14px;line-height:1.65;color:var(--text);padding-top:3px;}
+
+    .cta{background:var(--white);border-radius:18px;padding:20px;box-shadow:0 2px 10px var(--shadow);text-align:center;}
+    .cta-title{font-family:'Playfair Display',serif;font-size:19px;color:var(--brown);margin-bottom:6px;}
+    .cta-text{font-size:13px;color:var(--text-soft);line-height:1.6;margin-bottom:14px;}
+    .cta-btn{display:inline-block;background:var(--brown);color:var(--cream);text-decoration:none;padding:12px 22px;border-radius:14px;font-size:14px;font-weight:700;}
+    .shared-by{font-size:12px;color:var(--text-soft);margin-top:14px;text-align:center;}
+    .error-wrap{padding:60px 26px;text-align:center;max-width:520px;margin:0 auto;}
+    .error-emoji{font-size:56px;}
+    .error-title{font-family:'Playfair Display',serif;font-size:24px;color:var(--brown);margin:14px 0 8px;}
+    .error-text{font-size:14px;color:var(--text-soft);line-height:1.6;margin-bottom:20px;}
+  </style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="loading-emoji">🍽️</div>
+  <div class="loading-text">Открываю рецепт…</div>
+</div>
+
+<div id="page" style="display:none"></div>
+
+<script type="module">
+// Публичная страница одного рецепта.
+//
+// Читает ТОЛЬКО shares/{token} — снимок рецепта, который кто-то решил
+// показать (firestore.rules: allow get: if true). Ни книги рецептов, ни планов,
+// ни семьи по этой ссылке не видно: страница просто не обращается к ним, а
+// правила не дают их прочитать без входа.
+//
+// Вошедшего пользователя уводим в приложение: у него ссылка должна открываться
+// как обычная карточка рецепта со всеми кнопками, а не как урезанная копия.
+import { db, doc, getDoc, auth, onAuthStateChanged } from './js/firebase.js';
+import { escHtml } from './js/utils.js';
+import { readParam, isShareToken, SHARE_PARAM, appRecipeLink } from './js/share.js';
+
+const authReady = new Promise(resolve => {
+  const off = onAuthStateChanged(auth, user => { off(); resolve(user); }, () => resolve(null));
+});
+
+function showError(emoji, title, text) {
+  document.getElementById('loading').style.display = 'none';
+  const page = document.getElementById('page');
+  page.style.display = 'block';
+  page.innerHTML = '<div class="error-wrap"><div class="error-emoji">' + emoji + '</div>' +
+    '<div class="error-title">' + escHtml(title) + '</div>' +
+    '<div class="error-text">' + escHtml(text) + '</div>' +
+    '<a class="cta-btn" href="index.html">Открыть «Мою кухню»</a></div>';
+}
+
+function renderIngredients(list) {
+  return (list || []).map(i => {
+    if (i.divider != null) return '<div class="ingredient-divider">' + escHtml(i.divider) + '</div>';
+    return '<div class="ingredient-item"><span class="ingredient-name">' + escHtml(i.n) + '</span>' +
+      '<span class="ingredient-amount">' + escHtml(i.a || '') + '</span></div>';
+  }).join('');
+}
+
+function render(share) {
+  document.title = (share.title || 'Рецепт') + ' · Моя кухня';
+  const picture = share.image
+    ? '<img class="recipe-photo" src="' + escHtml(share.image) + '" alt="' + escHtml(share.title || '') + '"/>'
+    : '<span class="recipe-emoji-big">' + escHtml(share.emoji || '🍽️') + '</span>';
+  // yield и meta часто пересекаются («4 порции» и «~30 мин · 4 порции») —
+  // тогда достаточно более подробной строки
+  const parts = [share.yield, share.meta].filter(Boolean);
+  const yieldLine = parts.length === 2 && parts[1].includes(parts[0]) ? parts[1]
+    : parts.length === 2 && parts[0].includes(parts[1]) ? parts[0]
+    : parts.join(' · ');
+  const steps = (share.steps || []).filter(Boolean);
+
+  const html = [
+    '<div class="recipe-header">',
+    '<div class="kitchen-mark">🍽️ Моя кухня · рецепт по ссылке</div>',
+    picture,
+    '<div class="recipe-title-big">' + escHtml(share.title || 'Рецепт') + '</div>',
+    yieldLine ? '<div class="recipe-yield">' + escHtml(yieldLine) + '</div>' : '',
+    '</div>',
+    '<div class="recipe-body">',
+    share.note ? '<div class="note-box">💡 ' + escHtml(share.note) + '</div>' : '',
+    '<div class="section-label">Ингредиенты</div>',
+    '<div class="ingredients-box">' + renderIngredients(share.ingredients) + '</div>',
+    steps.length ? '<div class="section-label">Приготовление</div>' : '',
+    steps.length
+      ? '<div class="steps-list">' + steps.map((s, i) =>
+          '<div class="step-item"><div class="step-num">' + (i + 1) + '</div>' +
+          '<div class="step-text">' + escHtml(s) + '</div></div>').join('') + '</div>'
+      : '',
+    '<div class="cta">',
+    '<div class="cta-title">Своя книга рецептов</div>',
+    '<div class="cta-text">Этой ссылкой поделились одним рецептом. «Моя кухня» — семейный кулинарный ассистент: рецепты, КБЖУ, меню недели и список покупок.</div>',
+    '<a class="cta-btn" href="index.html">Войти в «Мою кухню»</a>',
+    '</div>',
+    share.sharedBy ? '<div class="shared-by">Рецептом поделились: ' + escHtml(share.sharedBy) + '</div>' : '',
+    '</div>',
+  ].join('');
+
+  const page = document.getElementById('page');
+  page.innerHTML = html;
+  document.getElementById('loading').style.display = 'none';
+  page.style.display = 'block';
+}
+
+async function boot() {
+  const token = readParam(location.search, SHARE_PARAM);
+  if (!isShareToken(token)) {
+    showError('🤔', 'Ссылка неполная', 'В адресе нет кода рецепта. Попроси отправить ссылку ещё раз.');
+    return;
+  }
+
+  // Читаем снимок и восстановление сессии параллельно: вошедшему нужен id
+  // рецепта, чтобы уйти в приложение, а не остаться на публичной копии.
+  const [user, snap] = await Promise.all([
+    authReady,
+    getDoc(doc(db, 'shares', token)).catch(e => { console.error('share:', e); return null; }),
+  ]);
+
+  if (user) {
+    const recipeId = snap && snap.exists() ? snap.data().recipeId : '';
+    location.replace(recipeId ? appRecipeLink(location.href, recipeId) : 'index.html');
+    return;
+  }
+
+  if (!snap) {
+    showError('😔', 'Не получилось открыть', 'Рецепт не загрузился — проверь интернет и попробуй ещё раз.');
+    return;
+  }
+  if (!snap.exists()) {
+    showError('🔒', 'Ссылка больше не работает', 'Её отключили или рецепт удалили. Попроси новую ссылку.');
+    return;
+  }
+  render(snap.data());
+}
+
+boot().catch(e => {
+  console.error(e);
+  showError('😔', 'Ошибка загрузки', e.message || String(e));
+});
+</script>
+</body>
+</html>

@@ -52,6 +52,7 @@
     .recipe-card:active{transform:scale(.98);}
     .recipe-card::before{content:'';position:absolute;top:0;left:0;width:5px;height:100%;background:var(--amber);border-radius:18px 0 0 18px;}
     .card-emoji{font-size:42px;line-height:1;flex-shrink:0;}
+    .card-photo{width:56px;height:56px;border-radius:14px;object-fit:cover;flex-shrink:0;background:var(--warm);}
     .card-info{flex:1;min-width:0;}
     .card-name{font-family:'Playfair Display',serif;font-size:18px;color:var(--brown);font-weight:700;line-height:1.2;}
     .card-meta{font-size:12px;color:var(--text-soft);margin-top:3px;font-weight:300;}
@@ -70,6 +71,18 @@
     .recipe-title-big{font-family:'Playfair Display',serif;font-size:28px;color:var(--cream);line-height:1.2;}
     .recipe-yield{font-size:12px;color:var(--amber-light);margin-top:5px;font-weight:300;letter-spacing:.08em;text-transform:uppercase;}
     .edit-btn{background:rgba(255,255,255,.15);border:none;color:var(--cream);padding:8px 14px;border-radius:10px;font-size:13px;cursor:pointer;font-family:'Lato',sans-serif;white-space:nowrap;flex-shrink:0;}
+    .recipe-header-btns{display:flex;flex-direction:column;gap:8px;flex-shrink:0;}
+
+    /* фото блюда: то же изображение служит аватаром в каталоге (thumb) */
+    .recipe-photo-wrap{margin-bottom:18px;}
+    .recipe-photo-box{position:relative;border-radius:18px;overflow:hidden;background:rgba(255,255,255,.08);}
+    .recipe-photo{display:block;width:100%;height:208px;object-fit:cover;}
+    .recipe-photo.is-thumb{filter:blur(8px);transform:scale(1.04);}
+    .photo-btn{position:absolute;bottom:10px;background:rgba(46,31,20,.62);color:var(--cream);border:none;border-radius:10px;padding:7px 12px;font-size:12px;cursor:pointer;font-family:'Lato',sans-serif;}
+    .photo-btn.replace{right:10px;}
+    .photo-btn.remove{right:auto;left:10px;}
+    .photo-add-btn{width:100%;padding:18px;border-radius:16px;border:2px dashed rgba(232,168,95,.55);background:rgba(255,255,255,.05);color:var(--amber-light);font-family:'Lato',sans-serif;font-size:14px;cursor:pointer;}
+    .photo-status{font-size:12px;color:var(--amber-light);margin-top:8px;}
 
     .recipe-body{padding:24px 20px;flex:1;}
     .section-label{font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:var(--amber);font-weight:700;margin-bottom:12px;}
@@ -283,6 +296,13 @@
     .pr-title{font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .pr-meta{font-size:11px;color:var(--text-soft);}
 
+    /* ── ПОДЕЛИТЬСЯ РЕЦЕПТОМ ── */
+    .share-link{width:100%;padding:11px 14px;border-radius:12px;border:2px solid var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:13px;color:var(--text);outline:none;}
+    .share-note{font-size:12px;color:var(--text-soft);line-height:1.55;margin:10px 0 14px;}
+    .share-actions{display:flex;flex-direction:column;gap:8px;}
+    .share-revoke{background:none;border:none;color:var(--red);font-size:13px;font-family:'Lato',sans-serif;cursor:pointer;padding:12px 0 2px;}
+    .share-status{font-size:12px;color:var(--text-soft);min-height:16px;margin-top:8px;}
+
     /* ── FAB GROUP ── */
     .fab-group{position:fixed;bottom:28px;right:24px;display:flex;flex-direction:column;align-items:flex-end;gap:12px;z-index:100;}
     .fab-camera{width:48px;height:48px;border-radius:50%;background:var(--amber-light);color:var(--white);font-size:22px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(212,132,58,.4);display:flex;align-items:center;justify-content:center;transition:transform .2s;}
@@ -464,13 +484,18 @@
 <div id="recipe-screen">
   <div class="recipe-header">
     <button class="back-btn" id="recipe-back-btn" onclick="recipeBack()">← Все рецепты</button>
+    <div class="recipe-photo-wrap" id="r-photo-wrap"></div>
+    <input type="file" accept="image/*" id="r-photo-input" style="display:none" onchange="onRecipePhotoPicked(this)"/>
     <div class="recipe-header-actions">
       <div>
         <span class="recipe-emoji-big" id="r-emoji"></span>
         <div class="recipe-title-big" id="r-title"></div>
         <div class="recipe-yield" id="r-yield"></div>
       </div>
-      <button class="edit-btn" onclick="openEditor(currentRecipe)">✏️ Изменить</button>
+      <div class="recipe-header-btns">
+        <button class="edit-btn" id="share-btn" onclick="openShare()">🔗 Поделиться</button>
+        <button class="edit-btn" id="recipe-edit-btn" onclick="openEditor(currentRecipe)">✏️ Изменить</button>
+      </div>
     </div>
   </div>
   <div class="recipe-body">
@@ -569,6 +594,14 @@
     <input id="picker-search" placeholder="Поиск по названию…" oninput="renderPickerList()" autocomplete="off"/>
     <button class="idea-act outline" onclick="pickerSurprise()" type="button">🌍 Найти новый рецепт в интернете</button>
     <div id="picker-list"></div>
+  </div>
+</div>
+
+<!-- ПОДЕЛИТЬСЯ: публичная ссылка на один рецепт -->
+<div id="share-sheet" class="picker-overlay" onclick="if(event.target===this)closeShare()">
+  <div class="picker-sheet" style="max-height:none">
+    <div class="picker-head"><span>🔗 Поделиться рецептом</span><button onclick="closeShare()" type="button">×</button></div>
+    <div id="share-body"><div class="share-note">Готовлю ссылку…</div></div>
   </div>
 </div>
 
@@ -740,7 +773,7 @@
 </div>
 
 <script type="module">
-import { db, collection, getDocs, doc, setDoc, deleteDoc } from './js/firebase.js';
+import { db, collection, getDocs, doc, getDoc, setDoc, deleteDoc } from './js/firebase.js';
 import { EMOJIS, TAGS } from './js/constants.js';
 import { escHtml, normalizeIngName, slugify, parseFractionInput, scaleAmount, parseJsonLoose, cleanStructuredEntry, getOpenAIKey, setOpenAIKey, pluralRu } from './js/utils.js';
 import { callNutritionGPT, nutritionPayload, saveNutritionDoc, expandIngredients, loadIngredientDict, dictLookup, entryKey, computeRecipeNutrition, callJsonGPT, chatCompletion, requireGptKey } from './js/nutrition.js';
@@ -752,6 +785,10 @@ import { pickSuggestion, whyLine, mealTypeFromClock, recipeMinutes, similarInCat
 import { loadPrices, savePriceDoc } from './js/store.js';
 import { priceStats, addPriceSample, priceVerdict, estimateItemCost, basketTotal, formatMoney,
   parsePriceInput, priceKeyFor, todayISO, normalizeReceipt, RECEIPT_PROMPT, MIN_SAMPLES_FOR_VERDICT } from './js/prices.js';
+import { compressPhoto } from './js/photo.js';
+import { shareLink, shareText, readParam, APP_RECIPE_PARAM } from './js/share.js';
+import { loadRecipeImage, saveRecipeImage, deleteRecipeImage, saveRecipeThumb,
+  publishShare, refreshShare, revokeShare, myShareToken } from './js/store.js';
 import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates, overlayStates, markCookedState, loadPlan, savePlan,
   initAuth, resolveHousehold, householdId, currentUid, currentUserEmail, LEGACY_HOUSEHOLD_ID,
   signInGoogle, signInEmail, registerEmail, signOutUser,
@@ -761,6 +798,12 @@ import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, 
 import { isBatchDish, mealTypesForRecipe } from './js/suggest.js';
 
 // ── STATE ──
+// Ссылка «открыть рецепт» (её даёт recipe.html вошедшему пользователю):
+// адрес читаем сразу и чистим, а рецепт открываем после входа и загрузки книги —
+// вход, онбординг и всё остальное идут своим обычным порядком.
+let pendingRecipeId = readParam(location.search, APP_RECIPE_PARAM);
+if (pendingRecipeId) history.replaceState(null, '', location.pathname);
+
 let allRecipes = [];
 let currentFilter = 'all';
 let searchQuery = '';
@@ -805,6 +848,21 @@ async function loadRecipes() {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('home').style.display = 'flex';
   renderCards();
+  if (pendingRecipeId) { const id = pendingRecipeId; pendingRecipeId = null; openRecipeById(id); }
+}
+
+// Рецепт по id из ссылки. Если его нет в загруженном списке (скрытый регулярный
+// или чужая семья) — дочитываем документ: книга рецептов общая для всех вошедших.
+async function openRecipeById(id) {
+  let r = allRecipes.find(x => x.id === id);
+  if (!r) {
+    try {
+      const snap = await getDoc(doc(db, 'recipes', id));
+      if (snap.exists()) r = { id: snap.id, ...snap.data() };
+    } catch (e) { console.error('Рецепт по ссылке не открылся:', e); }
+  }
+  if (r) openRecipe(r, 'home');
+  else alert('Рецепт не найден — возможно, его удалили.');
 }
 
 // ── ЗАГРУЗКА: auth → семья → рецепты ──
@@ -933,7 +991,10 @@ window.renderCards = function() {
   list.forEach(r => {
     const btn = document.createElement('button');
     btn.className = 'recipe-card';
-    btn.innerHTML = '<span class="card-emoji">' + escHtml(r.emoji||'🍽️') + '</span>' +
+    const avatar = r.thumb
+      ? '<img class="card-photo" src="' + escHtml(r.thumb) + '" alt="" loading="lazy"/>'
+      : '<span class="card-emoji">' + escHtml(r.emoji||'🍽️') + '</span>';
+    btn.innerHTML = avatar +
       '<div class="card-info"><div class="card-name">' + escHtml(r.title) + '</div>' +
       '<div class="card-meta">' + escHtml(r.meta||'') + '</div></div>' +
       '<span class="card-arrow">›</span>';
@@ -1192,18 +1253,22 @@ function openRecipeInner(r) {
   document.getElementById('r-yield').textContent = r.yield || '';
   document.getElementById('r-note-wrap').innerHTML = r.note ? '<div class="note-box">💡 ' + escHtml(r.note) + '</div>' : '';
 
+  showRecipePhoto(r);
+
   const cookedBtn = document.getElementById('cooked-btn');
   cookedBtn.disabled = false;
   cookedBtn.textContent = r.timesCooked ? `✓ Я приготовил(а) это (${r.timesCooked}×)` : '✓ Я приготовил(а) это';
 
   // Редактировать и удалять может только автор рецепта
   const editable = canEditRecipe(r);
-  document.querySelector('.edit-btn').style.display = editable ? '' : 'none';
+  document.getElementById('recipe-edit-btn').style.display = editable ? '' : 'none';
   document.querySelector('.delete-recipe-btn').style.display = editable ? '' : 'none';
   // Регулярный рецепт можно переселить в другую семью по коду (например,
   // если он осел не в той семье). Только для вошедших.
   document.getElementById('reassign-btn').style.display =
     (isRegularRecipe(r) && currentUid()) ? '' : 'none';
+  // ссылкой делится любой вошедший — рецепты книги видны всем семьям
+  document.getElementById('share-btn').style.display = currentUid() ? '' : 'none';
 
   renderIngredients(r.ingredients, 1);
   showNutritionPanel(r); // async, updates panel when data loads
@@ -1216,6 +1281,196 @@ function openRecipeInner(r) {
   show('recipe-screen');
   window.scrollTo(0,0);
   ['r-ingredients','r-steps'].forEach(id=>{const el=document.getElementById(id);el.classList.remove('stagger');void el.offsetWidth;el.classList.add('stagger');});
+}
+
+// ── ФОТО БЛЮДА ──
+// Оно же аватар в каталоге: квадрат (thumb) лежит в самом рецепте и едет со
+// списком, большая картинка — отдельным документом recipeImages/{id} и
+// грузится только здесь. Загружает тот, кто вправе править рецепт.
+const photoCache = new Map();   // recipeId → большая картинка (data-URI)
+let photoToken = 0;             // защита от гонки при быстрой смене рецептов
+
+function canEditPhoto(r) { return !!currentUid() && canEditRecipe(r); }
+
+// big — большая картинка; пока её нет, показываем размытый аватар.
+function renderPhotoBlock(r, big, status = '') {
+  const wrap = document.getElementById('r-photo-wrap');
+  const src = big || r.thumb || '';
+  const editable = canEditPhoto(r);
+  let html = '';
+  if (src) {
+    const blur = big ? '' : ' is-thumb';
+    html = '<div class="recipe-photo-box">' +
+      '<img class="recipe-photo' + blur + '" src="' + escHtml(src) + '" alt="' + escHtml(r.title || '') + '"/>' +
+      (editable
+        ? '<button class="photo-btn replace" type="button" onclick="pickRecipePhoto()">📷 Заменить</button>' +
+          '<button class="photo-btn remove" type="button" onclick="removeRecipePhoto()">🗑</button>'
+        : '') +
+      '</div>';
+  } else if (editable) {
+    html = '<button class="photo-add-btn" type="button" onclick="pickRecipePhoto()">📷 Добавить фото блюда</button>';
+  }
+  if (status) html += '<div class="photo-status">' + escHtml(status) + '</div>';
+  wrap.innerHTML = html;
+  // с фотографией большая эмодзи в шапке уже лишняя
+  document.getElementById('r-emoji').style.display = src ? 'none' : '';
+}
+
+function photoStatus(text) {
+  const r = window.currentRecipe;
+  if (r) renderPhotoBlock(r, photoCache.get(r.id) || '', text);
+}
+
+function showRecipePhoto(r) {
+  const token = ++photoToken;
+  renderPhotoBlock(r, photoCache.get(r.id) || '');
+  if (!r.thumb || photoCache.has(r.id)) return;
+  loadRecipeImage(r.id)
+    .then(url => {
+      if (token !== photoToken || !url) return; // рецепт уже сменился
+      photoCache.set(r.id, url);
+      renderPhotoBlock(r, url);
+    })
+    .catch(e => console.error('Не загрузилось фото рецепта:', e));
+}
+
+window.pickRecipePhoto = function() {
+  document.getElementById('r-photo-input').click();
+}
+
+window.onRecipePhotoPicked = async function(input) {
+  const file = input.files && input.files[0];
+  input.value = ''; // тот же файл можно выбрать снова
+  const r = window.currentRecipe;
+  if (!file || !r) return;
+  photoStatus('⏳ Готовлю фото…');
+  try {
+    const { full, thumb } = await compressPhoto(file);
+    await saveRecipeImage(r.id, full);
+    await saveRecipeThumb(r.id, thumb);
+    applyThumb(r, thumb);
+    photoCache.set(r.id, full);
+    renderPhotoBlock(r, full);
+    renderCards();
+    refreshShareSnapshot(r);
+  } catch (e) {
+    console.error('Фото не сохранилось:', e);
+    photoStatus('😔 ' + (e.message || 'не получилось сохранить фото'));
+  }
+}
+
+window.removeRecipePhoto = async function() {
+  const r = window.currentRecipe;
+  if (!r || !confirm('Убрать фото блюда?')) return;
+  photoStatus('⏳ Убираю…');
+  try {
+    await deleteRecipeImage(r.id);
+    await saveRecipeThumb(r.id, '');
+    applyThumb(r, '');
+    photoCache.delete(r.id);
+    renderPhotoBlock(r, '');
+    renderCards();
+    refreshShareSnapshot(r);
+  } catch (e) {
+    console.error('Фото не удалилось:', e);
+    photoStatus('😔 ' + (e.message || 'не получилось убрать фото'));
+  }
+}
+
+// Аватар в памяти: и на открытом рецепте, и в списке каталога.
+function applyThumb(r, thumb) {
+  if (thumb) r.thumb = thumb; else delete r.thumb;
+  const inList = allRecipes.find(x => x.id === r.id);
+  if (inList && inList !== r) { if (thumb) inList.thumb = thumb; else delete inList.thumb; }
+}
+
+// ── ПОДЕЛИТЬСЯ РЕЦЕПТОМ ──
+// Публичная ссылка ведёт на recipe.html — снимок ОДНОГО рецепта в отдельном
+// документе shares/{token}, читаемом без входа. Остальное приложение по
+// ссылке недоступно; вошедшего пользователя recipe.html уводит сюда же,
+// в обычную карточку рецепта.
+let shareUrl = '';
+
+// Снимок освежаем, только если ссылкой уже делились. Большую картинку при
+// этом дочитываем: иначе после правки названия в ссылке остался бы размытый
+// аватар вместо фото блюда.
+async function refreshShareSnapshot(r) {
+  try {
+    if (!(await myShareToken(r.id))) return;
+    let image = photoCache.get(r.id) || '';
+    if (!image && r.thumb) {
+      image = await loadRecipeImage(r.id);
+      if (image) photoCache.set(r.id, image);
+    }
+    await refreshShare(r, image, household?.name || '');
+  } catch (e) { console.error('Не обновился снимок публичной ссылки:', e); }
+}
+
+window.openShare = async function() {
+  const r = window.currentRecipe;
+  if (!r) return;
+  shareUrl = '';
+  document.getElementById('share-body').innerHTML = '<div class="share-note">Готовлю ссылку…</div>';
+  document.getElementById('share-sheet').style.display = 'flex';
+  try {
+    const token = await publishShare(r, { image: photoCache.get(r.id) || '', sharedBy: household?.name || '' });
+    shareUrl = shareLink(location.href, token);
+    renderShareBody(r);
+  } catch (e) {
+    console.error('Ссылка не создалась:', e);
+    document.getElementById('share-body').innerHTML =
+      '<div class="share-note">😔 Не получилось создать ссылку: ' + escHtml(e.message || String(e)) + '</div>';
+  }
+}
+
+function renderShareBody(r) {
+  document.getElementById('share-body').innerHTML =
+    '<input class="share-link" id="share-url" readonly value="' + escHtml(shareUrl) + '" onclick="this.select()"/>' +
+    '<div class="share-note">По этой ссылке видно только «' + escHtml(r.title) + '» — без книги рецептов, меню и семьи. ' +
+    'А если открывший ссылку уже вошёл в «Мою кухню», он попадёт на обычную карточку рецепта в приложении.</div>' +
+    '<div class="share-actions">' +
+    (navigator.share ? '<button class="idea-act primary" type="button" onclick="shareNative()">📤 Отправить</button>' : '') +
+    '<button class="idea-act secondary" type="button" onclick="copyShareLink()">📋 Скопировать ссылку</button>' +
+    '</div>' +
+    '<div class="share-status" id="share-status"></div>' +
+    '<button class="share-revoke" type="button" onclick="revokeShareLink()">Отключить ссылку</button>';
+}
+
+window.copyShareLink = async function() {
+  const status = document.getElementById('share-status');
+  try {
+    await navigator.clipboard.writeText(shareUrl);
+    status.textContent = '✔ Ссылка скопирована';
+  } catch (e) {
+    document.getElementById('share-url').select();      // буфер закрыт — копируем вручную
+    status.textContent = 'Скопируй ссылку вручную (⌘/Ctrl+C)';
+  }
+}
+
+window.shareNative = async function() {
+  const r = window.currentRecipe;
+  try { await navigator.share({ title: r?.title || 'Рецепт', text: shareText(r), url: shareUrl }); }
+  catch (e) { /* пользователь закрыл системное меню — молчим */ }
+}
+
+window.revokeShareLink = async function() {
+  const r = window.currentRecipe;
+  if (!r || !confirm('Отключить ссылку? У всех, кому ты её отправила, рецепт перестанет открываться.')) return;
+  const status = document.getElementById('share-status');
+  try {
+    await revokeShare(r.id);
+    shareUrl = '';
+    document.getElementById('share-body').innerHTML =
+      '<div class="share-note">Ссылка отключена — старый адрес больше не открывается. ' +
+      'Нажми «🔗 Поделиться» ещё раз, если понадобится новая.</div>';
+  } catch (e) {
+    console.error('Ссылка не отключилась:', e);
+    if (status) status.textContent = '😔 Не получилось: ' + (e.message || e);
+  }
+}
+
+window.closeShare = function() {
+  document.getElementById('share-sheet').style.display = 'none';
 }
 
 // ── ИСТОРИЯ ГОТОВКИ ── (пишется в recipeState семьи, не в общий рецепт)
@@ -2489,7 +2744,12 @@ window.parseComboDishes = async function() {
 window.deleteRecipe = async function() {
   if (!window.currentRecipe) return;
   if (!confirm('Удалить «' + window.currentRecipe.title + '»? Это нельзя отменить.')) return;
-  await deleteDoc(doc(db, 'recipes', window.currentRecipe.id));
+  const id = window.currentRecipe.id;
+  await deleteDoc(doc(db, 'recipes', id));
+  // фото и публичная ссылка живут отдельными документами — чистим следом
+  if (window.currentRecipe.thumb) await deleteRecipeImage(id).catch(e => console.error('фото:', e));
+  await revokeShare(id).catch(e => console.error('ссылка:', e));
+  photoCache.delete(id);
   allRecipes = allRecipes.filter(r => r.id !== window.currentRecipe.id);
   window.currentRecipe = null;
   goHome();
@@ -2659,6 +2919,7 @@ window.saveRecipe = async function() {
     createdBy: orig?.createdBy || ownerId(), // авторство сохраняется при правке
     ...(servingsVal > 0 ? { servings: servingsVal } : {}),
     ...(orig?.attrs ? { attrs: orig.attrs } : {}),
+    ...(orig?.thumb ? { thumb: orig.thumb } : {}), // аватар живёт мимо редактора
     ...(orig?.needsReview ? { needsReview: orig.needsReview } : {}),
   };
 
@@ -2670,6 +2931,7 @@ window.saveRecipe = async function() {
     const idx = allRecipes.findIndex(r=>r.id===id);
     if (idx>=0) allRecipes[idx] = recipe; else allRecipes.push(recipe);
     allRecipes.sort((a,b)=>a.title.localeCompare(b.title,'ru'));
+    refreshShareSnapshot(recipe); // если ссылкой уже делились — она покажет правку
     btn.disabled = false; btn.textContent = '💾 Сохранить рецепт';
     closeEditor();
     openRecipe(recipe, recipeBackTo);
@@ -2694,6 +2956,7 @@ window.goHome = function() {
 }
 
 function show(id) {
+  closeShare(); // шторка ссылки не должна пережить смену экрана
   ['loading','home','recipe-screen','editor-screen','idea-screen','week-screen','family-screen','admin-screen','auth-screen','onboarding-screen'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.style.display = (s===id) ? 'flex' : 'none';
