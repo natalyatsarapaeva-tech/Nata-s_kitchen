@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  weekStartISO, buildSlots, generateWeek, rerollSlot,
+  weekStartISO, buildSlots, generateWeek, rerollSlot, orderedDays, weekStartDay, WEEK_START_DEFAULT,
   aggregateShopping, shoppingAmountLabel, weekTotals, DAYS,
   baseWeekTarget, pickBaseSlotIds, dayHasReheat, pickReheatSource, baseDinnersSetting,
 } from '../js/planner.js';
@@ -31,6 +31,55 @@ test('buildSlots: по умолчанию сб-вс планируют все т
   assert.ok(!slots.some(s => s.id === 'mon_breakfast'), 'будни — только из planMeals');
   assert.equal(buildSlots({}).length, 11, 'дефолтный профиль — то же самое');
   assert.equal(buildSlots({ planMeals: ['breakfast', 'lunch', 'dinner'] }).length, 21);
+});
+
+test('weekStartISO: неделя может начинаться с любого дня', () => {
+  const sat = new Date('2026-07-18T12:00:00'); // суббота
+  assert.equal(weekStartISO(sat, { weekStartDay: 'thu' }), '2026-07-16'); // прошлый чт
+  assert.equal(weekStartISO(sat, 'sat'), '2026-07-18');                   // сама суббота
+  assert.equal(weekStartISO(sat, 'sun'), '2026-07-12');                   // прошлое вс
+  // мусор и отсутствие настройки — понедельник
+  assert.equal(weekStartISO(sat, { weekStartDay: 'вторник' }), '2026-07-13');
+  assert.equal(weekStartISO(sat, {}), '2026-07-13');
+});
+
+test('weekStartDay / orderedDays: порядок дней плана', () => {
+  assert.equal(WEEK_START_DEFAULT, 'mon');
+  assert.equal(weekStartDay({}), 'mon');
+  assert.equal(weekStartDay('thu'), 'thu');
+  assert.equal(weekStartDay({ weekStartDay: 'xx' }), 'mon');
+  assert.deepEqual(orderedDays('thu'), ['thu', 'fri', 'sat', 'sun', 'mon', 'tue', 'wed']);
+  assert.deepEqual(orderedDays({ weekStartDay: 'sun' }), ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']);
+  assert.deepEqual(orderedDays(), DAYS);
+});
+
+test('buildSlots: id слотов остаются днями недели, меняется только порядок', () => {
+  const ids = buildSlots({ planMeals: ['dinner'], weekendFull: false, weekStartDay: 'thu' }).map(s => s.id);
+  assert.deepEqual(ids, ['thu_dinner', 'fri_dinner', 'sat_dinner', 'sun_dinner',
+    'mon_dinner', 'tue_dinner', 'wed_dinner']);
+  // выходные остаются выходными: weekendFull привязан к самим сб-вс
+  const full = buildSlots({ planMeals: ['dinner'], weekStartDay: 'thu' });
+  assert.equal(full.length, 11);
+  assert.equal(full[0].id, 'thu_dinner');
+  assert.deepEqual(full.filter(s => s.day === 'sat').map(s => s.meal),
+    ['breakfast', 'lunch', 'dinner']);
+});
+
+test('разогрев считает «вчера» и «завтра» внутри плана, а не по календарю', async () => {
+  const { findReheatSlotId } = await import('../js/planner.js');
+  const profile = { planMeals: ['dinner'], weekStartDay: 'thu' };
+  // среда — последний день такой недели: разогрев уехал бы в следующую
+  assert.equal(findReheatSlotId(profile, 'wed_dinner'), null);
+  // а воскресенье теперь в середине недели, разогрев есть
+  assert.equal(findReheatSlotId(profile, 'sun_dinner'), 'mon_dinner');
+
+  const slots = { wed_dinner: { recipeId: 'd' }, thu_dinner: { recipeId: 'e' } };
+  assert.equal(pickReheatSource(slots, 'thu_dinner', 'thu'), null, 'первый день недели');
+  assert.deepEqual(pickReheatSource(slots, 'fri_dinner', 'thu'),
+    { sourceSlotId: 'thu_dinner', recipeId: 'e' });
+  // при неделе с понедельника всё как раньше
+  assert.deepEqual(pickReheatSource(slots, 'thu_dinner'),
+    { sourceSlotId: 'wed_dinner', recipeId: 'd' });
 });
 
 const CATALOG = Array.from({ length: 10 }, (_, i) => ({

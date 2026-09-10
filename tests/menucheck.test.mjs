@@ -31,6 +31,16 @@ test('describeWeekForCheck: строки по слотам с деталями',
   assert.match(text, /белок: мясо/);
 });
 
+test('describeWeekForCheck: дни идут в порядке плана семьи', () => {
+  const slots = { mon_dinner: { recipeId: 'r1' }, thu_dinner: { recipeId: 'r2' } };
+  const recipes = { r1: { title: 'Плов' }, r2: { title: 'Уха' } };
+  const lines = describeWeekForCheck(slots, recipes, { weekStartDay: 'thu' }).split('\n');
+  assert.match(lines[0], /^thu_dinner/, 'неделя с четверга — четверг первым');
+  assert.match(lines[1], /^mon_dinner/);
+  // по умолчанию (и без профиля) — с понедельника
+  assert.match(describeWeekForCheck(slots, recipes).split('\n')[0], /^mon_dinner/);
+});
+
 test('describeWeekForCheck: пустые слоты пропускаются', () => {
   const text = describeWeekForCheck({ mon_dinner: { recipeId: null }, wed_lunch: {} }, RECIPES);
   assert.equal(text, '');

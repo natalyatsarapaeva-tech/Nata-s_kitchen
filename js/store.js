@@ -160,6 +160,7 @@ const DEFAULT_PROFILE = {
   name: 'Моя семья',
   members: [{ name: 'Я', coeff: 1 }],
   planMeals: ['dinner'],
+  weekStartDay: 'mon',  // с какого дня начинается неделя плана
   weekendFull: true, // сб-вс планируют все три приёма независимо от planMeals
   // бюджет времени на ужин по дням (мин); null = не ограничено
   rhythm: { mon: 45, tue: 45, wed: 45, thu: 45, fri: 60, sat: null, sun: null },
