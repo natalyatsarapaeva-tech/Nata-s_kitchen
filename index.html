@@ -146,6 +146,7 @@
     .field-input{width:100%;padding:12px 14px;border-radius:12px;border:2px solid var(--warm);background:var(--white);font-family:'Lato',sans-serif;font-size:15px;color:var(--text);outline:none;margin-bottom:18px;}
     .field-input:focus{border-color:var(--amber);}
     textarea.field-input{resize:vertical;min-height:80px;}
+    select.field-input{appearance:none;cursor:pointer;background-image:linear-gradient(45deg,transparent 50%,var(--amber) 50%),linear-gradient(135deg,var(--amber) 50%,transparent 50%);background-position:calc(100% - 18px) 21px,calc(100% - 12px) 21px;background-size:6px 6px;background-repeat:no-repeat;}
 
     .emoji-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
     .emoji-btn{font-size:28px;padding:8px;border-radius:10px;border:2px solid var(--warm);background:var(--white);cursor:pointer;}
@@ -649,6 +650,18 @@
       <label><input type="checkbox" id="f-weekend-full" checked/> Сб-Вс — все три приёма</label>
     </div>
 
+    <label class="field-label">Неделя начинается с</label>
+    <select class="field-input" id="f-week-start">
+      <option value="mon">Понедельника</option>
+      <option value="tue">Вторника</option>
+      <option value="wed">Среды</option>
+      <option value="thu">Четверга</option>
+      <option value="fri">Пятницы</option>
+      <option value="sat">Субботы</option>
+      <option value="sun">Воскресенья</option>
+    </select>
+    <div class="mood-caption" style="margin-top:-12px">удобно, если закупаетесь не в выходные: неделя, печать и список покупок начнутся с этого дня. «Сб-Вс — все три приёма» и время по дням остаются привязаны к самим дням, а уже сохранённые планы других недель остаются на месте.</div>
+
     <label class="field-label">Время на ужин по дням (мин, пусто — не ограничено)</label>
     <div id="fam-rhythm"></div>
 
@@ -794,7 +807,7 @@ import { ownerId, canEditRecipe, loadHousehold, saveHousehold, loadRecipeStates,
   signInGoogle, signInEmail, registerEmail, signOutUser,
   createHousehold, joinHouseholdByCode, legacyHouseholdUnclaimed, claimLegacyHousehold,
   findHouseholdByCode, reassignRecipeHousehold } from './js/store.js';
-import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor, pickReheatSource, dayHasReheat } from './js/planner.js';
+import { DAYS, DAY_LABELS, MEAL_LABELS, weekStartISO, buildSlots, generateWeek, rerollSlot, aggregateShopping, shoppingAmountLabel, CATEGORY_LABELS, weekTotals, clearBatchLinks, applyBatchLink, batchFactor, pickReheatSource, dayHasReheat, orderedDays, weekStartDay } from './js/planner.js';
 import { isBatchDish, mealTypesForRecipe } from './js/suggest.js';
 
 // ── STATE ──
@@ -1818,7 +1831,7 @@ window.openWeek = async function() {
   show('week-screen');
   window.scrollTo(0, 0);
   await Promise.all([ensureDict(), ensureHousehold()]);
-  const ws = weekStartISO();
+  const ws = weekStartISO(new Date(), household);
   document.getElementById('week-range').textContent = weekRangeLabel(ws);
   currentPlan = await loadPlan(ws);
   delete currentPlan.checked; // отметки «куплено» больше не храним — только в браузере
@@ -1876,7 +1889,7 @@ window.sanityCheckWeek = async function() {
   const byId = {}; allRecipes.forEach(r => byId[r.id] = r);
   status.textContent = '⏳ Проверяю меню на разнообразие… (обычно 10–20 секунд)';
   try {
-    const weekText = describeWeekForCheck(slots, byId);
+    const weekText = describeWeekForCheck(slots, byId, household);
     const parsed = await callJsonGPT(sysPrompt, buildMenuCheckUserMsg(weekText), apiKey, 1500);
     const { reroll, notes } = parseMenuCheckResult(parsed);
     // не трогаем закреплённые и разогревы (привязаны к готовке)
@@ -1940,7 +1953,7 @@ window.weekReheat = async function(slotId) {
     alert('В этот день уже есть разогрев — двух разогревов в один день не делаем.');
     return;
   }
-  const src = pickReheatSource(currentPlan.slots, slotId);
+  const src = pickReheatSource(currentPlan.slots, slotId, household);
   if (!src) { alert('Нет вчерашнего приготовленного блюда, чтобы разогреть.'); return; }
   clearBatchLinks(currentPlan.slots, slotId); // если этот слот был готовкой — снять его разогревы
   currentPlan.slots[slotId] = { recipeId: src.recipeId, locked: true, kind: 'reheat', linkedTo: src.sourceSlotId };
@@ -1981,7 +1994,7 @@ function renderWeek() {
   const slots = buildSlots(household);
   const byDay = {};
   slots.forEach(s => { (byDay[s.day] = byDay[s.day] || []).push(s); });
-  grid.innerHTML = DAYS.filter(d => byDay[d]).map(day => `
+  grid.innerHTML = orderedDays(household).filter(d => byDay[d]).map(day => `
     <div class="week-day">
       <div class="week-day-label">${DAY_LABELS[day]}</div>
       ${byDay[day].map(s => renderSlot(s, byId)).join('')}
@@ -2313,12 +2326,13 @@ function printMenuHTML() {
       ${byDay[day].map(slotHtml).join('')}
     </div>`;
   const col = days => days.filter(d => byDay[d]).map(dayHtml).join('');
+  const ord = orderedDays(household); // первые четыре дня недели — левая колонка
   return `
     <section>
-      <div class="pw-title">📅 Меню недели · ${weekRangeLabel(currentPlan.weekStart || weekStartISO())}</div>
+      <div class="pw-title">📅 Меню недели · ${weekRangeLabel(currentPlan.weekStart || weekStartISO(new Date(), household))}</div>
       <div class="pw-grid">
-        <div>${col(['mon', 'tue', 'wed', 'thu'])}</div>
-        <div>${col(['fri', 'sat', 'sun'])}</div>
+        <div>${col(ord.slice(0, 4))}</div>
+        <div>${col(ord.slice(4))}</div>
       </div>
     </section>`;
 }
@@ -2543,6 +2557,7 @@ window.openFamily = async function() {
   document.getElementById('f-lunch').checked = !!household.planMeals?.includes('lunch');
   document.getElementById('f-dinner').checked = household.planMeals?.includes('dinner') ?? true;
   document.getElementById('f-weekend-full').checked = household.weekendFull !== false;
+  document.getElementById('f-week-start').value = weekStartDay(household);
   document.getElementById('f-exclude').value = household.excludeText || '';
   document.getElementById('f-regular').value = household.regularDishesText || '';
   document.getElementById('f-regular-count').value = '';
@@ -2566,7 +2581,7 @@ window.openFamily = async function() {
   document.getElementById('fam-members').innerHTML = '';
   (household.members?.length ? household.members : [{ name: '', coeff: 1 }])
     .forEach(m => addFamMemberRow(m.name, m.coeff));
-  document.getElementById('fam-rhythm').innerHTML = DAYS.map(d =>
+  document.getElementById('fam-rhythm').innerHTML = orderedDays(household).map(d =>
     `<div class="rhythm-row"><span>${DAY_LABELS[d]}</span>
      <input type="number" min="5" id="rhythm-${d}" value="${household.rhythm?.[d] ?? ''}" placeholder="∞"/></div>`).join('');
   // код приглашения и аккаунт
@@ -2609,6 +2624,7 @@ window.saveFamily = async function() {
     members: members.length ? members : [{ name: 'Я', coeff: 1 }],
     planMeals: planMeals.length ? planMeals : ['dinner'],
     weekendFull: document.getElementById('f-weekend-full').checked,
+    weekStartDay: weekStartDay(document.getElementById('f-week-start').value),
     rhythm,
     excludeText: document.getElementById('f-exclude').value.trim(),
     regularDishesText: document.getElementById('f-regular').value.trim(),

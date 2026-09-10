@@ -4,14 +4,39 @@ import { pickSuggestion, isBatchDish, proteinClass, proteinKey, sideKey, effecti
 import { expandIngredients, dictLookup, entryKey, gramsForEntry, computeRecipeNutrition, DEFAULT_UNIT_G } from './nutrition-core.js';
 import { isRegularRecipe } from './regular.js';
 
+// Канонический порядок дней: из него собираются id слотов (`thu_dinner`),
+// поэтому он НЕ меняется от настроек — меняется только порядок показа,
+// см. orderedDays. Так планы, снятые при другом первом дне, остаются читаемыми.
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const DAY_LABELS = { mon: 'Пн', tue: 'Вт', wed: 'Ср', thu: 'Чт', fri: 'Пт', sat: 'Сб', sun: 'Вс' };
 export const MEAL_LABELS = { breakfast: '🌅 Завтрак', lunch: '🥪 Обед', dinner: '🍲 Ужин' };
 
-// Понедельник недели, содержащей дату, в формате YYYY-MM-DD (локальное время).
-export function weekStartISO(d = new Date()) {
+// ── Первый день недели ──
+// Неделю можно начинать с любого дня (семья закупается в четверг — неделя
+// идёт с четверга). По умолчанию понедельник.
+export const WEEK_START_DEFAULT = 'mon';
+
+// Принимает профиль семьи ({weekStartDay}) или сам день; мусор → понедельник.
+export function weekStartDay(profileOrDay) {
+  const d = typeof profileOrDay === 'string' ? profileOrDay : profileOrDay?.weekStartDay;
+  return DAYS.includes(d) ? d : WEEK_START_DEFAULT;
+}
+
+// Дни в порядке плана: для четверга — чт, пт, сб, вс, пн, вт, ср.
+export function orderedDays(profileOrDay) {
+  const i = DAYS.indexOf(weekStartDay(profileOrDay));
+  return [...DAYS.slice(i), ...DAYS.slice(0, i)];
+}
+
+// Начало недели, содержащей дату, в формате YYYY-MM-DD (локальное время):
+// последний прошедший (или сегодняшний) первый день недели. Это же id
+// документа плана, поэтому при смене первого дня неделя переезжает на
+// свою дату, а старые планы остаются на месте.
+export function weekStartISO(d = new Date(), profileOrDay) {
   const date = new Date(d);
-  date.setDate(date.getDate() - (date.getDay() + 6) % 7);
+  const today = (date.getDay() + 6) % 7;                    // 0 = понедельник
+  const start = DAYS.indexOf(weekStartDay(profileOrDay));
+  date.setDate(date.getDate() - ((today - start + 7) % 7));
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
@@ -22,7 +47,7 @@ export function buildSlots(profile) {
   const meals = profile?.planMeals?.length ? profile.planMeals : ['dinner'];
   const weekendAll = profile?.weekendFull !== false;
   const slots = [];
-  for (const day of DAYS) {
+  for (const day of orderedDays(profile)) {
     const dayMeals = weekendAll && (day === 'sat' || day === 'sun')
       ? ['breakfast', 'lunch', 'dinner'] : meals;
     for (const meal of ['breakfast', 'lunch', 'dinner']) {
@@ -36,8 +61,9 @@ export function buildSlots(profile) {
 // обед/ужин → завтрашний обед, если планируется, иначе завтрашний ужин.
 export function findReheatSlotId(profile, cookSlotId) {
   const [day, meal] = cookSlotId.split('_');
-  const nextDay = DAYS[DAYS.indexOf(day) + 1];
-  if (!nextDay) return null; // воскресный батч — разогрев уже в следующей неделе
+  const ord = orderedDays(profile);
+  const nextDay = ord[ord.indexOf(day) + 1];
+  if (!nextDay) return null; // батч в последний день — разогрев уже в следующей неделе
   const ids = new Set(buildSlots(profile).map(s => s.id));
   const prefs = meal === 'breakfast' ? ['breakfast'] : ['lunch', 'dinner'];
   for (const m of prefs) {
@@ -57,12 +83,13 @@ export function dayHasReheat(slotsMap, day, exceptSlotId = null) {
 
 // Что «вчерашнее» можно разогреть в слоте slotId: приготовленное (не разогрев)
 // блюдо предыдущего дня, предпочтительно ужин → обед → завтрак. Null, если
-// вчерашнего дня нет (понедельник) или там нечего разогревать.
-export function pickReheatSource(slotsMap, slotId) {
+// предыдущего дня в плане нет (первый день недели) или там нечего разогревать.
+export function pickReheatSource(slotsMap, slotId, profileOrDay) {
   const [day] = slotId.split('_');
-  const idx = DAYS.indexOf(day);
+  const ord = orderedDays(profileOrDay);
+  const idx = ord.indexOf(day);
   if (idx <= 0) return null;
-  const prevDay = DAYS[idx - 1];
+  const prevDay = ord[idx - 1];
   for (const m of ['dinner', 'lunch', 'breakfast']) {
     const s = slotsMap?.[`${prevDay}_${m}`];
     if (s?.recipeId && s.kind !== 'reheat') {

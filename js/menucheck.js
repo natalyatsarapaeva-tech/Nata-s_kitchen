@@ -7,7 +7,7 @@
 // детерминированный rerollSlot (который уже соблюдает разнообразие). Промпт
 // редактируется на админ-странице; здесь — только значение по умолчанию,
 // сериализация недели и разбор ответа. Чистая логика без Firebase.
-import { DAYS, DAY_LABELS, MEAL_LABELS } from './planner.js';
+import { DAY_LABELS, MEAL_LABELS, orderedDays } from './planner.js';
 import { proteinClass, proteinKey, sideKey } from './suggest.js';
 
 // Редактируемый промпт по умолчанию (админ-страница может переопределить).
@@ -43,10 +43,12 @@ function slotLine(slot, r, locked) {
 }
 
 // Компактное текстовое описание недели для GPT: по дню и приёму пищи.
-export function describeWeekForCheck(slots, recipesById) {
+// Дни идут в порядке плана семьи (неделя может начинаться не с понедельника) —
+// иначе проверка рассуждала бы о «двух днях подряд» не по тем дням.
+export function describeWeekForCheck(slots, recipesById, profile) {
   const meals = ['breakfast', 'lunch', 'dinner'];
   const lines = [];
-  for (const day of DAYS) {
+  for (const day of orderedDays(profile)) {
     for (const meal of meals) {
       const id = `${day}_${meal}`;
       const slot = slots?.[id];
