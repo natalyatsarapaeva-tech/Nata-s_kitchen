@@ -1,7 +1,21 @@
-// Firestore security rules для мульти-семейной модели.
+// Единый набор правил для общего Firebase-проекта `natas-kitchen`, в котором
+// рядом живут ДВА независимых приложения:
+//   • «Моя кухня» — семьи, рецепты, фото, публичные ссылки, справочник КБЖУ;
+//     корневые коллекции users/, households/, recipes/, recipeImages/,
+//     shares/, nutrition/.
+//   • Twin (менеджер задач) — целиком в своём пространстве
+//     apps/twin/users/{uid}/...
+// Пути приложений не пересекаются, поэтому правила просто соседствуют.
+// Catch-all deny не нужен: всё, что не описано ниже, Firestore запрещает сам.
 //
-// ВАЖНО: пока эти правила не задеплоены, база открыта («test mode»).
-// Перед тестом с тремя семьями:
+// ВАЖНО: это ОДИН документ на весь проект. Консоль Firestore хранит только
+// последнюю опубликованную версию, поэтому деплоить нужно ВЕСЬ этот файл —
+// если вставить правила только одного приложения, второе тут же отключится
+// (именно так и вышло: правила «Кухни» без блока apps/twin положили Twin).
+// Копия этого файла лежит в обоих репозиториях и должна оставаться
+// одинаковой: natalyatsarapaeva-tech/Nata-s_kitchen и .../twin.
+//
+// Перед первым деплоем (шаги владельца):
 //   1. Firebase Console → Authentication → включить провайдеры
 //      Google и Email/Password.
 //   2. Authentication → Settings → Authorized domains → добавить
@@ -9,7 +23,7 @@
 //   3. Вставить эти правила: Console → Firestore Database → Rules
 //      (или firebase deploy --only firestore:rules).
 //
-// Модель:
+// Модель «Кухни»:
 //   users/{uid}        — маппинг пользователь → семья (пишет только сам)
 //   households/{hid}   — профиль семьи; подколлекции recipeState/plans/prices — только членам
 //   recipes/{id}       — общая книга: читают все вошедшие, правит автор
@@ -19,6 +33,9 @@
 //                        кто угодно по точному токену (без входа), пишет и
 //                        отзывает только тот, кто поделился
 //   nutrition/{id}     — общий справочник КБЖУ (факты, не мнения)
+//
+// Модель Twin:
+//   apps/twin/users/{uid}/{tasks|contexts|meta}/... — только сам пользователь
 
 rules_version = '2';
 
@@ -44,6 +61,8 @@ service cloud.firestore {
             || (get(/databases/$(database)/documents/recipes/$(recipeId)).data.get('createdBy', 'default') == 'default'
                 && myHousehold() == 'default'));
     }
+
+    // ═══════════ «Моя кухня» (семьи, рецепты, фото, ссылки, КБЖУ) ═══════════
 
     match /users/{uid} {
       allow read, write: if signedIn() && request.auth.uid == uid;
@@ -105,6 +124,14 @@ service cloud.firestore {
 
     match /nutrition/{ingredientId} {
       allow read, write: if signedIn();
+    }
+
+    // ═══════════ Twin (менеджер задач, в своём пространстве) ═══════════
+    // Каждый вошедший пользователь читает и пишет ТОЛЬКО своё поддерево.
+    // Модель данных: apps/twin/users/{uid}/{tasks|contexts|meta}/...
+
+    match /apps/twin/users/{uid}/{document=**} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
     }
   }
 }
